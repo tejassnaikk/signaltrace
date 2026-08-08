@@ -1,0 +1,80 @@
+==============================================================
+SCALE AND DISPERSION
+==============================================================
+sessions         mean=  2468.759  med=  2391.000  cv= 0.29  min=  1211.00  max=   4807.00
+transactions     mean=    33.068  med=    32.000  cv= 0.50  min=     0.00  max=     89.00
+revenue          mean=  4196.620  med=  3859.310  cv= 0.81  min=     0.00  max=  27150.61
+conversion_rate  mean=     0.013  med=     0.013  cv= 0.44  min=     0.00  max=      0.05
+aov              mean=   119.898  med=   108.791  cv= 0.59  min=    16.48  max=    733.80
+
+==============================================================
+WEEKLY SEASONALITY  (revenue by weekday, index vs overall mean)
+==============================================================
+Monday     mean=     5133  index= 1.22  cv= 0.56
+Tuesday    mean=     5753  index= 1.37  cv= 0.66
+Wednesday  mean=     5740  index= 1.37  cv= 0.67
+Thursday   mean=     5176  index= 1.23  cv= 0.60
+Friday     mean=     4974  index= 1.19  cv= 0.63
+Saturday   mean=     1123  index= 0.27  cv= 0.66
+Sunday     mean=     1458  index= 0.35  cv= 0.55
+
+==============================================================
+TREND  (monthly revenue and sessions)
+==============================================================
+2016-08  sessions=    74759  revenue=     154667
+2016-09  sessions=    71032  revenue=     126031
+2016-10  sessions=    97506  revenue=     113329
+2016-11  sessions=   113972  revenue=     119014
+2016-12  sessions=    79124  revenue=     154558
+2017-01  sessions=    64694  revenue=      97878
+2017-02  sessions=    62192  revenue=     108757
+2017-03  sessions=    69931  revenue=     130964
+2017-04  sessions=    67126  revenue=     158789
+2017-05  sessions=    65371  revenue=     121711
+2017-06  sessions=    63578  revenue=     121569
+2017-07  sessions=    71812  revenue=     124499
+
+==============================================================
+EXTREMES  (top 8 and bottom 5 revenue days)
+==============================================================
+HIGH 2017-04-05 Wednesday rev=     27151 sess=  2619 txn=  37 aov=  733.80
+HIGH 2017-02-14 Tuesday   rev=     23028 sess=  2379 txn=  51 aov=  451.54
+HIGH 2016-09-16 Friday    rev=     20266 sess=  2603 txn=  39 aov=  519.65
+HIGH 2016-08-25 Thursday  rev=     17186 sess=  2539 txn=  78 aov=  220.34
+HIGH 2017-07-18 Tuesday   rev=     17003 sess=  2804 txn=  51 aov=  333.39
+HIGH 2017-04-27 Thursday  rev=     16829 sess=  2838 txn=  43 aov=  391.36
+HIGH 2016-12-12 Monday    rev=     14010 sess=  3433 txn=  85 aov=  164.82
+HIGH 2016-11-30 Wednesday rev=     13827 sess=  4435 txn=  58 aov=  238.40
+LOW  2016-08-03 Wednesday rev=         0 sess=  2890 txn=   0
+LOW  2017-01-28 Saturday  rev=        71 sess=  1614 txn=   4
+LOW  2017-07-01 Saturday  rev=        85 sess=  2048 txn=   3
+LOW  2017-01-15 Sunday    rev=        99 sess=  1576 txn=   6
+LOW  2016-09-17 Saturday  rev=       155 sess=  1853 txn=   8
+
+==============================================================
+RESIDUAL SPREAD vs SEASONAL-NAIVE BASELINE (same weekday, prior 4 wks)
+==============================================================
+usable points        : 355
+residual median      : -462.7
+residual MAD         : 1946.5   (robust sigma ~ 2885.8)
+pct dev  p05/p50/p95 : -85.0% / -11.3% / +212.8%
+|robust z| > 3       : 13 days
+|robust z| > 4       : 4 days
+
+==============================================================
+SEGMENT SPARSITY  (date x channel x device x country cells)
+==============================================================
+       channel  cells  sessions   txns  revenue
+Organic Search   9912  380215.0 3575.0 325688.0
+        Social   8180  225904.0  131.0   4917.0
+        Direct   7825  142626.0 2211.0 432317.0
+      Referral   5196  104402.0 5514.0 646459.0
+   Paid Search   2600   25256.0  478.0  43476.0
+    Affiliates   3354   16351.0    9.0    597.0
+       Display   1045    6223.0  151.0  78302.0
+       (Other)     54     120.0    1.0     10.0
+
+ device  cells  sessions    txns   revenue
+desktop  18031  662737.0 11028.0 1472575.0
+ mobile  13557  208000.0   864.0   49770.0
+ tablet   6578   30360.0   178.0    9421.0
