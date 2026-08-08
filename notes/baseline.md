@@ -95,3 +95,54 @@ investigation layer must be able to distinguish (Simpson's paradox case).
 - Minimum-volume floor per segment before a cell is eligible to alert
 - Verify robust-z thresholds separately per component (sessions tight, AOV wide)
 - False-positive floor on untouched data must be measured per component
+
+---
+
+## Order concentration (added after AOV detector design question)
+
+The daily export carries only SUM(revenue) and SUM(transactions), so AOV is
+structurally a mean and cannot be trimmed or winsorized: individual orders are
+not present. A second BigQuery pull (`data/raw/order_concentration.csv`, 365
+rows) adds per-day order distribution: order_count, max_order, median_order,
+top_order_share. Loaded as table `order_concentration`.
+
+### Population distribution of top_order_share
+mean 0.271 | median 0.226 | p90 0.462 | p99 0.791 | max 0.852
+
+### Concentration cleanly separates whales from broad-based demand
+| date | AOV | txns | revenue | max order | median order | top share |
+|---|---|---|---|---|---|---|
+| 2017-04-05 | 734 | 37 | 27,151 | **23,130** | 59 | **0.852** |
+| 2016-09-16 | 520 | 39 | 20,266 | 16,024 | 48 | **0.791** |
+| 2017-02-14 | 452 | 51 | 23,028 | 17,856 | 45 | **0.775** |
+| 2016-12-12 | 165 | 85 | 14,010 | 6,997 | 56 | 0.499 |
+| 2016-11-30 | 238 | 58 | 13,827 | 4,848 | 45 | 0.351 |
+| 2016-08-25 | 220 | 78 | 17,186 | 4,086 | **98** | 0.238 |
+
+Top 3 = ONE buyer (78-85% of the day's revenue, median order still normal at
+45-59). Bottom 3 = genuinely broad-based; 2016-08-25 has a median order of 98
+vs the usual 45-50, i.e. many customers spending more.
+
+### DECISION: AOV is an independent detector, not attribution-only
+Attribution-only was considered and REJECTED: the benchmark includes a pure
+AOV incident (-12% with traffic and conversion flat). If AOV cannot fire
+independently, that incident is a silent miss.
+
+Instead AOV detects with a wide threshold, then an explanation step
+reclassifies single-order-driven spikes as **explained, not incident**. This is
+a feature, not a suppression hack: the investigation concludes "driven by one
+order representing 85% of daily revenue" and logs it to the evidence ledger.
+
+### The concentration check needs TWO conditions
+A share threshold alone misfires on thin days. 2016-10-01: top_order_share
+0.790 on just 6 orders totalling 771, max order only 609. High share purely
+because the denominator is small, not because a whale exists.
+
+Rule: single-order-driven requires
+1. `top_order_share` > ~0.65 (population p90 is 0.462, p99 is 0.791), AND
+2. `max_order` large in absolute terms vs the trailing median order
+   (2017-04-05: max is ~390x that day's median. 2016-10-01: max is within
+   normal order range.)
+
+Same failure mode as segment sparsity: **a ratio without a volume floor lies on
+small denominators.** This applies to every ratio metric in the system.
