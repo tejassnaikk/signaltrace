@@ -146,3 +146,67 @@ Rule: single-order-driven requires
 
 Same failure mode as segment sparsity: **a ratio without a volume floor lies on
 small denominators.** This applies to every ratio metric in the system.
+
+---
+
+## M2 — Detection results and the revised gate
+
+### The gate changed, deliberately
+Original gate: "zero alerts on untouched normal periods." **Not achievable and
+the wrong target.** At ~33 txns/day the revenue residual spread is irreducible
+(p05/p95 -72%/+161%); a detector that never fires on a thin Saturday or a whale
+also never fires on a genuine 15% drop. Revised gate: **separability** - a
+measured per-component false-positive floor, with injected incidents required
+to land outside it.
+
+### Two hypotheses tested and DISCARDED (kept for the writeup)
+1. **Heteroscedasticity by weekday.** Predicted weekend residuals would be much
+   tighter than weekday. Measured MAD: Sat 152.8 vs Tue 212.5 - only 1.4x, not
+   the ~4x needed. Per-weekday scaling changed sessions crossings 37 -> 38.
+   No effect. (It DID help revenue: 32 -> 19.)
+2. **Short-window lag as a universal fix.** Sessions bias/scale went +0.15 ->
+   -0.02 and crossings 37 -> 19 from 4wk to 12wk, confirming it for sessions.
+   But revenue bottoms at 8wk and worsens at 12; conversion is flat. Window
+   length is NOT a universal fix - it is component-specific.
+
+### Final settings (detection/config.py)
+| component | window | threshold | FP floor | measured |
+|---|---|---|---|---|
+| sessions | 12 wk | z > 4 | 1.4% | 1.4% |
+| conversion_rate | 8 wk | z > 4 | 1.6% | 1.8% |
+| aov | 12 wk | z > 4 + concentration | 2.9% | 1.4% |
+| revenue | - | composed from components | - | 4.6% |
+
+Windows are per-component and justified by measured variance structure:
+sessions is a large-N count that drifts slowly (longer window stabilises);
+conversion is a bounded ratio that responds fast (longer window adds lag
+without reducing noise). AOV lands BELOW its floor because the concentration
+check absorbed 4 of its firings.
+
+Cost: the 12-week warm-up burns 84 days. Usable detection range is
+**2016-10-24 to 2017-07-31 (281 days)** out of 365. This is the price of the
+12-month dataset limit accepted when GA360 was chosen over Olist.
+
+### Concentration check validated
+All 4 whales caught: 2017-04-05 (share 0.85, max 395x median), 2017-02-14
+(0.78, 399x), 2017-03-24 (0.78, 141x), 2016-11-26 (0.81, **45x**). The last is
+the marginal case and the reason BOTH conditions are required - share alone
+would also catch thin days with no whale.
+
+### The composed incidents are mostly REAL SEASONALITY, not false positives
+13 flagged days, of which ~8 fall into two clusters:
+- **2016-12-26 to 2017-01-02**: sessions down 56-65%, 4 days. Christmas. This
+  is a corporate merch store; holiday traffic collapse is expected.
+- **2016-12-09 to 2016-12-16**: conversion up 185-322%, 4 days. Holiday
+  purchasing intent - same traffic, far more buying.
+
+Non-seasonal FP floor is therefore ~5/281 = **1.8%**, genuinely tight.
+
+### Consequence for M3
+With only 12 months there is no prior year, so year-over-year seasonality
+detection is impossible. Substitute: a **persistence and shape check** - a
+single-day deviation is an incident candidate; a multi-day cluster moving
+coherently in one direction inside a known low-activity calendar window is a
+seasonal regime. This belongs in the INVESTIGATION layer, not the detector.
+The detector's job is "sessions dropped 58%"; concluding "it was Christmas" is
+a hypothesis that must be tested against evidence.
