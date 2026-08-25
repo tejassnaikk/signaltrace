@@ -210,3 +210,40 @@ coherently in one direction inside a known low-activity calendar window is a
 seasonal regime. This belongs in the INVESTIGATION layer, not the detector.
 The detector's job is "sessions dropped 58%"; concluding "it was Christmas" is
 a hypothesis that must be tested against evidence.
+
+---
+
+## M3 — Segment viability (measured, changes what is diagnosable)
+
+Only these segments clear the ratio gate (>=5 txns/day) on most days:
+
+| dimension | segment | sessions | txns | pct days ratio-eligible |
+|---|---|---|---|---|
+| channel | Referral | 104,402 | 5,514 | **91%** |
+| channel | Organic Search | 380,215 | 3,575 | **87%** |
+| channel | Direct | 142,626 | 2,211 | **55%** |
+| device | desktop | 662,737 | 11,028 | **99%** |
+| country | United States | 363,457 | 11,396 | **99%** |
+
+Everything else is TRAFFIC-ONLY: Social 2%, Paid Search 3%, Affiliates 0%,
+Display 0%, mobile 12%, tablet 1%, and every non-US country 0-4%. Vietnam has
+24,578 sessions and **zero** transactions all year.
+
+### Structural pattern
+Each dimension is one dominant segment plus a long traffic-only tail. Desktop
+carries 11,028 of 12,070 txns; US carries 11,396. A US-localized ratio anomaly
+is therefore nearly indistinguishable from the global one.
+
+### Consequences
+1. **The hypothesis generator must consult eligibility BEFORE emitting a test.**
+   A conversion hypothesis for Social (2% eligible) is statistically
+   meaningless. Third occurrence of the volume-floor principle (after the
+   concentration check and the segment gates).
+2. **Benchmark incidents must target eligible segments for ratio metrics.**
+   Injecting a conversion drop into Canada (199 txns/year) produces an incident
+   the system correctly cannot diagnose - which tests nothing. Traffic
+   incidents may target any reasonably-sized segment.
+3. **Mobile sets up the Simpson's paradox case.** 24% of traffic, 3% of
+   revenue, 12% ratio-eligible. A traffic mix shift toward mobile depresses
+   BLENDED conversion with no per-segment change. Hard diagnosis, strong
+   demonstration case if the system handles it.
