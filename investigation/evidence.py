@@ -87,7 +87,9 @@ class Ledger:
             p_value=num(result.p_value),
             q_value=num(result.q_value),
             verdict=result.verdict,
-            basis=self.BASIS.get(result.kind, "statistical_test"),
+            basis=("decomposition_only"
+                   if not getattr(result, "testable", True)
+                   else self.BASIS.get(result.kind, "statistical_test")),
             detail=getattr(result, "detail", ""),
         )
         self._entries.append(e)
@@ -104,7 +106,8 @@ class Ledger:
     def supported(self) -> list[EvidenceEntry]:
         return [e for e in self._entries
                 if e.verdict in ("strong", "plausible",
-                                 "material_but_uncertain", "arithmetic")]
+                                 "material_but_uncertain", "arithmetic",
+                                 "material_untested")]
 
     def negative(self) -> list[EvidenceEntry]:
         """Tests that ran and did NOT support a cause. Kept deliberately."""

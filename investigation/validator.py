@@ -45,6 +45,7 @@ class Result:
     q_value: float
     verdict: str
     detail: str = ""
+    testable: bool = True   # False when no valid statistical test exists
 
 
 def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
@@ -65,7 +66,8 @@ def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
     return q
 
 
-def _verdict(contribution: float, q: float, kind: str = "segment") -> str:
+def _verdict(contribution: float, q: float, kind: str = "segment",
+             testable: bool = True) -> str:
     c = abs(contribution) if not pd.isna(contribution) else 0.0
     if c < VALIDATOR["materiality_floor"]:
         return "immaterial"
@@ -74,6 +76,11 @@ def _verdict(contribution: float, q: float, kind: str = "segment") -> str:
     # so it is never "uncertain" and must not be scored as if it were.
     if kind == "mix":
         return "arithmetic"
+    # No valid test exists for this hypothesis (see _mean_test_unavailable).
+    # A missing test is NOT weak evidence - it is the absence of evidence, and
+    # must not be laundered into "material_but_uncertain".
+    if not testable:
+        return "material_untested"
     if not pd.isna(q) and q < VALIDATOR["q_strong"]:
         return "strong"
     if not pd.isna(q) and q < VALIDATOR["q_plausible"]:
@@ -93,14 +100,30 @@ def _poisson_p(actual: float, expected: float) -> float:
     return float(min(1.0, 2 * p))
 
 
+# AOV is revenue/transactions - a MEAN of order values, not a proportion.
+# Applying a two-proportion z-test to it is invalid: the pooled estimate can
+# exceed 1, pool*(1-pool) goes negative, and the sqrt returns NaN. That was
+# silently producing NaN p-values that fell through to "material_but_uncertain".
+#
+# A correct test (Welch's t) needs the VARIANCE of order values within each
+# segment. The daily export carries only SUM(revenue) and SUM(transactions) per
+# cell, so that variance does not exist in our data. Rather than fabricate a
+# test, AOV segment hypotheses are reported as decomposition only.
+_MEAN_TEST_UNAVAILABLE = ("AOV is a mean; a valid test needs within-segment "
+                          "order variance, which the daily export lacks")
+
+
 def _prop_p(num_a: float, den_a: float, num_e: float, den_e: float) -> float:
-    """Two-proportion z-test for conversion-rate style hypotheses."""
+    """Two-proportion z-test. VALID ONLY for conversion_rate (a true
+    proportion: transactions per session, both bounded and countable)."""
     if min(den_a, den_e) <= 0 or pd.isna(num_a) or pd.isna(num_e):
         return np.nan
     p1, p2 = num_a / den_a, num_e / den_e
     pool = (num_a + num_e) / (den_a + den_e)
+    if not (0 < pool < 1):        # not a proportion -> test does not apply
+        return np.nan
     se = np.sqrt(pool * (1 - pool) * (1 / den_a + 1 / den_e))
-    if se == 0:
+    if se == 0 or np.isnan(se):
         return np.nan
     return float(2 * stats.norm.sf(abs(p1 - p2) / se))
 
@@ -139,10 +162,14 @@ def validate_segments(metric: str, dimension: str,
                 (r["rate_actual"] / r["rate_expected"] - 1
                  if r["rate_expected"] else np.nan),
                 r["within_share"], r["within_effect"],
-                _prop_p(act.loc[seg, num], act.loc[seg, den],
-                        exp.loc[seg, num], exp.loc[seg, den]),
+                (_prop_p(act.loc[seg, num], act.loc[seg, den],
+                         exp.loc[seg, num], exp.loc[seg, den])
+                 if metric == "conversion_rate" else np.nan),
                 np.nan, "pending",
-                detail=f"within-segment rate change (mix effect excluded)"))
+                detail=("within-segment rate change (mix effect excluded)"
+                        if metric == "conversion_rate"
+                        else f"within-segment AOV change; {_MEAN_TEST_UNAVAILABLE}"),
+                testable=(metric == "conversion_rate")))
     else:
         c = additive_contributions(act[metric], exp[metric])
         for seg in c.index:
@@ -159,7 +186,7 @@ def validate_segments(metric: str, dimension: str,
     # Mix carries no p-value, so it is excluded from the BH family - including
     # it would shrink the family size and weaken every other correction.
     material = [r for r in results
-                if r.kind != "mix"
+                if r.kind != "mix" and r.testable
                 and not pd.isna(r.contribution)
                 and abs(r.contribution) >= VALIDATOR["materiality_floor"]]
     if material:
@@ -167,7 +194,7 @@ def validate_segments(metric: str, dimension: str,
         for r, q in zip(material, qs):
             r.q_value = float(q) if not np.isnan(q) else np.nan
     for r in results:
-        r.verdict = _verdict(r.contribution, r.q_value, r.kind)
+        r.verdict = _verdict(r.contribution, r.q_value, r.kind, r.testable)
 
     return sorted(results,
                   key=lambda r: -abs(r.contribution if not pd.isna(r.contribution) else 0))
