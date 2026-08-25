@@ -44,3 +44,21 @@ EXCLUDE_DATES = {"2016-08-03"}  # data gap: 2890 sessions, 0 txns, 0 revenue
 # 12-week warm-up burns 84 days. Usable detection range on a 365-day dataset:
 DETECTION_START = "2016-10-24"
 DETECTION_END = "2017-07-31"
+
+
+# --- Validator thresholds (JUDGMENT CALLS, not derived from data) -----------
+# These are the only numbers in the system chosen by reasoning rather than
+# measurement. Flagged as such so the writeup can be honest about it.
+VALIDATOR = {
+    # Contribution share below which a hypothesis is dropped BEFORE testing.
+    # Affiliates is ~1.4% of sessions and falls out automatically here.
+    "materiality_floor": 0.05,
+    # A hypothesis explaining this much is reported even if its test is
+    # marginal -> the "material but statistically uncertain" verdict.
+    "high_contribution": 0.30,
+    "q_strong": 0.05,
+    "q_plausible": 0.10,
+    # Benjamini-Hochberg family = (metric, investigation). Sessions hypotheses
+    # and conversion hypotheses are different outcome families.
+    "bh_family": ("metric",),
+}

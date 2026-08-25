@@ -1,0 +1,201 @@
+"""Hypothesis validation: contribution-first, BH-adjusted significance second.
+
+Two concepts kept deliberately separate:
+    EFFECT      how much of the observed KPI change does this explain?
+    EVIDENCE    how confident are we the segment change is not noise?
+
+Ranking is by EFFECT. Significance qualifies the result; it does not order it.
+A segment explaining 40% of a decline outranks one explaining 1%, however
+significant the latter's local change is.
+
+Verdicts:
+    strong                   contribution >= floor AND q < 0.05
+    plausible                contribution >= floor AND q < 0.10
+    material_but_uncertain   contribution >= high_contribution AND q >= 0.10
+    immaterial               contribution < floor  (dropped before testing)
+"""
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import asdict, dataclass
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from detection.config import VALIDATOR
+from investigation.attribution import additive_contributions, ratio_decomposition
+
+
+@dataclass
+class Result:
+    hid: str
+    kind: str
+    metric: str
+    dimension: str | None
+    segment: str | None
+    actual: float
+    expected: float
+    pct_change: float
+    contribution: float
+    abs_contribution: float
+    p_value: float
+    q_value: float
+    verdict: str
+    detail: str = ""
+
+
+def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
+    """Step-up FDR control. Returns q-values in the input order."""
+    p = np.asarray(p, dtype=float)
+    ok = ~np.isnan(p)
+    q = np.full(p.shape, np.nan)
+    if ok.sum() == 0:
+        return q
+    pv = p[ok]
+    n = len(pv)
+    order = np.argsort(pv)
+    ranked = pv[order] * n / np.arange(1, n + 1)
+    ranked = np.minimum.accumulate(ranked[::-1])[::-1]
+    out = np.empty(n)
+    out[order] = np.clip(ranked, 0, 1)
+    q[ok] = out
+    return q
+
+
+def _verdict(contribution: float, q: float, kind: str = "segment") -> str:
+    c = abs(contribution) if not pd.isna(contribution) else 0.0
+    if c < VALIDATOR["materiality_floor"]:
+        return "immaterial"
+    # Mix is an exact algebraic identity, not a sampled estimate: the
+    # decomposition residual is ~1e-19. There is no null hypothesis to test,
+    # so it is never "uncertain" and must not be scored as if it were.
+    if kind == "mix":
+        return "arithmetic"
+    if not pd.isna(q) and q < VALIDATOR["q_strong"]:
+        return "strong"
+    if not pd.isna(q) and q < VALIDATOR["q_plausible"]:
+        return "plausible"
+    if c >= VALIDATOR["high_contribution"]:
+        return "material_but_uncertain"
+    return "unsupported"
+
+
+def _poisson_p(actual: float, expected: float) -> float:
+    """Two-sided Poisson tail for count metrics (sessions, transactions)."""
+    if pd.isna(actual) or pd.isna(expected) or expected <= 0:
+        return np.nan
+    k, lam = int(round(actual)), float(expected)
+    p = (stats.poisson.cdf(k, lam) if k < lam
+         else stats.poisson.sf(k - 1, lam))
+    return float(min(1.0, 2 * p))
+
+
+def _prop_p(num_a: float, den_a: float, num_e: float, den_e: float) -> float:
+    """Two-proportion z-test for conversion-rate style hypotheses."""
+    if min(den_a, den_e) <= 0 or pd.isna(num_a) or pd.isna(num_e):
+        return np.nan
+    p1, p2 = num_a / den_a, num_e / den_e
+    pool = (num_a + num_e) / (den_a + den_e)
+    se = np.sqrt(pool * (1 - pool) * (1 / den_a + 1 / den_e))
+    if se == 0:
+        return np.nan
+    return float(2 * stats.norm.sf(abs(p1 - p2) / se))
+
+
+def validate_segments(metric: str, dimension: str,
+                      act: pd.DataFrame, exp: pd.DataFrame,
+                      hid_base: str = "H") -> list[Result]:
+    """Test every segment of one dimension for one metric.
+
+    act/exp are indexed by segment with columns sessions, transactions, revenue.
+    """
+    results: list[Result] = []
+    is_ratio = metric in ("conversion_rate", "aov")
+
+    if is_ratio:
+        num, den = (("transactions", "sessions") if metric == "conversion_rate"
+                    else ("revenue", "transactions"))
+        d = ratio_decomposition(act[num], act[den], exp[num], exp[den])
+        ps = d["per_segment"]
+        # The mix term is its own explanation, not attributable to a segment.
+        results.append(Result(
+            f"{hid_base}-MIX", "mix", metric, dimension, None,
+            d["blend_actual"], d["blend_expected"],
+            (d["blend_actual"] / d["blend_expected"] - 1
+             if d["blend_expected"] else np.nan),
+            (d["mix_total"] / d["blend_delta"]
+             if abs(d["blend_delta"]) > 1e-12 else np.nan),
+            d["mix_total"], np.nan, np.nan, "pending",
+            detail=(f"traffic mix shift across {dimension}; "
+                    f"within={d['within_total']:+.5f} mix={d['mix_total']:+.5f}")))
+        for seg in ps.index:
+            r = ps.loc[seg]
+            results.append(Result(
+                f"{hid_base}-{seg}", "segment", metric, dimension, str(seg),
+                r["rate_actual"], r["rate_expected"],
+                (r["rate_actual"] / r["rate_expected"] - 1
+                 if r["rate_expected"] else np.nan),
+                r["within_share"], r["within_effect"],
+                _prop_p(act.loc[seg, num], act.loc[seg, den],
+                        exp.loc[seg, num], exp.loc[seg, den]),
+                np.nan, "pending",
+                detail=f"within-segment rate change (mix effect excluded)"))
+    else:
+        c = additive_contributions(act[metric], exp[metric])
+        for seg in c.index:
+            r = c.loc[seg]
+            results.append(Result(
+                f"{hid_base}-{seg}", "segment", metric, dimension, str(seg),
+                r["actual"], r["expected"],
+                (r["actual"] / r["expected"] - 1 if r["expected"] else np.nan),
+                r["contribution"], r["abs_contribution"],
+                _poisson_p(r["actual"], r["expected"]), np.nan, "pending"))
+
+    # Materiality gate BEFORE multiple-comparison correction: immaterial
+    # hypotheses are not part of the tested family and must not inflate it.
+    # Mix carries no p-value, so it is excluded from the BH family - including
+    # it would shrink the family size and weaken every other correction.
+    material = [r for r in results
+                if r.kind != "mix"
+                and not pd.isna(r.contribution)
+                and abs(r.contribution) >= VALIDATOR["materiality_floor"]]
+    if material:
+        qs = benjamini_hochberg(np.array([r.p_value for r in material]))
+        for r, q in zip(material, qs):
+            r.q_value = float(q) if not np.isnan(q) else np.nan
+    for r in results:
+        r.verdict = _verdict(r.contribution, r.q_value, r.kind)
+
+    return sorted(results,
+                  key=lambda r: -abs(r.contribution if not pd.isna(r.contribution) else 0))
+
+
+def to_frame(results: list[Result]) -> pd.DataFrame:
+    return pd.DataFrame([asdict(r) for r in results])
+
+
+if __name__ == "__main__":
+    # Case 1: one segment genuinely collapses.
+    exp = pd.DataFrame({"sessions": [1500.0, 600.0, 300.0, 100.0]},
+                       index=["Organic Search", "Direct", "Referral", "Social"])
+    act = exp.copy()
+    act.loc["Organic Search", "sessions"] = 900.0   # -40%
+    act.loc["Social", "sessions"] = 88.0            # small, noisy
+
+    print("=== sessions: Organic Search collapses ===")
+    r = validate_segments("sessions", "channel", act, exp)
+    print(to_frame(r)[["segment", "pct_change", "contribution",
+                       "p_value", "q_value", "verdict"]].round(4).to_string(index=False))
+
+    # Case 2: pure mix shift, no segment rate changes.
+    exp2 = pd.DataFrame({"transactions": [100.0, 10.0], "sessions": [5000.0, 2000.0]},
+                        index=["desktop", "mobile"])
+    act2 = pd.DataFrame({"transactions": [80.0, 15.0], "sessions": [4000.0, 3000.0]},
+                        index=["desktop", "mobile"])
+    print("\n=== conversion_rate: pure mix shift toward mobile ===")
+    r2 = validate_segments("conversion_rate", "device", act2, exp2)
+    print(to_frame(r2)[["kind", "segment", "contribution", "q_value",
+                        "verdict", "detail"]].round(4).to_string(index=False))
