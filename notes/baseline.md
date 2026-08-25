@@ -247,3 +247,24 @@ is therefore nearly indistinguishable from the global one.
    revenue, 12% ratio-eligible. A traffic mix shift toward mobile depresses
    BLENDED conversion with no per-segment change. Hard diagnosis, strong
    demonstration case if the system handles it.
+
+---
+
+## Scope decision: seasonality discrimination NOT built
+
+A persistence/coherence module was drafted and then removed. Its thresholds
+(run length, coherence fraction, score cutoffs) would have been invented rather
+than measured, and with only 12 months of data there is no ground truth for
+"was this deviation seasonal" against which to validate them.
+
+Every other threshold in this system traces to a measured false-positive floor
+or an exact identity. This one could not, so it was cut.
+
+**Consequence, stated rather than hidden:** the engine cannot distinguish a
+recurring calendar regime from an incident. The Dec 26 - Jan 2 traffic collapse
+and the Dec 9-16 conversion spike remain in the false-positive count. Roughly 8
+of 13 flagged days on untouched data are real seasonality the system reports as
+anomalies.
+
+This is a dataset limitation, not an implementation gap. Year-over-year
+comparison is the standard solution and requires at least two years.
