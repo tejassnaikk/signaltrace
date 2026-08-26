@@ -140,15 +140,47 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
             print(factor_tbl[["actual", "expected", "pct_change",
                               "contribution", "abs_contribution"]]
                   .round(4).to_string())
+        # Rank WITHIN each dimension, never pooled across dimensions.
+        # Each dimension independently partitions the whole population, so its
+        # contributions sum to ~100% on their own. Pooling channel + device +
+        # country into one leaderboard double-counts: "desktop", "United
+        # States" and "Referral" are largely the SAME transactions viewed three
+        # ways, and a pooled list summed to ~287% on 2017-04-27.
         sup = [e for e in led.supported() if e.kind in ("segment", "mix")]
-        print(f"\nRANKED EXPLANATIONS  ({len(led.entries)} tests run)")
+        print(f"\nEXPLANATIONS BY DIMENSION  ({len(led.entries)} tests run)")
         if not sup:
             print("  none reached the materiality floor")
-        for e in sorted(sup, key=lambda x: -abs(x.contribution or 0))[:8]:
-            loc = f"{e.dimension}={e.segment}" if e.segment else f"{e.dimension} mix"
-            q = "n/a" if e.q_value is None else f"{e.q_value:.4f}"
-            print(f"  {e.metric:16s} {loc:28s} contrib={e.contribution:+7.1%} "
-                  f"q={q:>8s} {e.verdict} [{e.basis}]")
+        for metric in sorted({e.metric for e in sup}):
+            print(f"\n  {metric}")
+            for dim in DIMENSIONS:
+                rows = [e for e in sup if e.metric == metric and e.dimension == dim]
+                if not rows:
+                    continue
+                rows.sort(key=lambda x: -abs(x.contribution or 0))
+                print(f"    by {dim}:")
+                for e in rows[:4]:
+                    name = e.segment if e.segment else "(traffic mix)"
+                    q = "n/a" if e.q_value is None else f"{e.q_value:.4f}"
+                    print(f"      {name:22s} {e.contribution:+7.1%}  "
+                          f"q={q:>8s}  {e.verdict} [{e.basis}]")
+
+        # When the top segment of EVERY dimension is material, the movement is
+        # concentrated in one intersection rather than caused by three separate
+        # things. When dimensions disagree, that is informative too.
+        tops = {}
+        for metric in {e.metric for e in sup}:
+            for dim in DIMENSIONS:
+                rows = [e for e in sup if e.metric == metric
+                        and e.dimension == dim and e.segment]
+                if rows:
+                    top = max(rows, key=lambda x: abs(x.contribution or 0))
+                    tops.setdefault(metric, []).append((dim, top))
+        for metric, pairs in tops.items():
+            if len(pairs) == len(DIMENSIONS) and all(
+                    abs(t.contribution or 0) >= 0.40 for _, t in pairs):
+                where = " + ".join(f"{t.segment}" for _, t in pairs)
+                print(f"\n  CONCENTRATED: {metric} movement sits in "
+                      f"{where} (dominant in every dimension)")
         print(f"\nNEGATIVE EVIDENCE: {len(led.negative())} tests ran and did "
               f"not support a cause")
         print(led.summary())
