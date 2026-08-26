@@ -49,6 +49,32 @@ def _seg_expectation(seg: pd.DataFrame, col: str, weeks: int) -> pd.DataFrame:
     return piv, exp
 
 
+def _fmt_share(contribution: float) -> str:
+    """Format a contribution as a share OF the movement, never as a signed
+    change. `delta_segment / delta_total` is positive whenever the segment
+    moved the same way as the total, so printing "+64.5%" beside a metric that
+    FELL reads as though the segment rose. The direction belongs to the metric
+    and is stated once in the header; each segment carries only its share."""
+    if contribution is None or pd.isna(contribution):
+        return "     n/a"
+    c = contribution
+    if c < 0:
+        return f"{abs(c):6.1%} opp"   # moved AGAINST the metric, partly offsetting
+    return f"{c:6.1%}    "
+
+
+def _fmt_abs(value: float, metric: str) -> str:
+    """Absolute movement, so a large share of a tiny segment cannot masquerade
+    as business impact (Social is 64% of a session decline but 131 txns/yr)."""
+    if value is None or pd.isna(value):
+        return ""
+    if metric in ("sessions", "transactions"):
+        return f"{value:+,.0f}"
+    if metric == "conversion_rate":
+        return f"{value:+.4f}pp"
+    return f"{value:+,.2f}"
+
+
 def investigate(date, con=None, verbose: bool = True) -> dict:
     date = pd.Timestamp(date)
     own = con is None
@@ -136,10 +162,22 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
 
     if verbose:
         if factor_tbl is not None:
-            print("\nREVENUE FACTOR DECOMPOSITION")
-            print(factor_tbl[["actual", "expected", "pct_change",
-                              "contribution", "abs_contribution"]]
-                  .round(4).to_string())
+            rev_a = float(np.prod([factor_tbl.loc[f, "actual"]
+                                   for f in REVENUE_FACTORS]))
+            rev_e = float(np.prod([factor_tbl.loc[f, "expected"]
+                                   for f in REVENUE_FACTORS]))
+            direction = "below" if rev_a < rev_e else "above"
+            print(f"\nREVENUE {rev_a:,.0f} vs expected {rev_e:,.0f} "
+                  f"({abs(rev_a/rev_e - 1):.1%} {direction})")
+            offsetting = (factor_tbl["contribution"] < 0).any()
+            for f in REVENUE_FACTORS:
+                r = factor_tbl.loc[f]
+                print(f"  {f:16s} {r['pct_change']:+8.1%}  "
+                      f"share of move {_fmt_share(r['contribution'])} "
+                      f"({r['abs_contribution']:+,.0f})")
+            if offsetting:
+                print("  note: factors moved in OPPOSITE directions, so shares "
+                      "exceed 100% and are partly cancelled by the 'opp' rows")
         # Rank WITHIN each dimension, never pooled across dimensions.
         # Each dimension independently partitions the whole population, so its
         # contributions sum to ~100% on their own. Pooling channel + device +
@@ -151,7 +189,11 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
         if not sup:
             print("  none reached the materiality floor")
         for metric in sorted({e.metric for e in sup}):
-            print(f"\n  {metric}")
+            mrow = fired[fired["metric"] == metric]
+            move = (f"{mrow['pct_dev'].iloc[0]:+.1%}" if not mrow.empty else "")
+            word = ("decline" if not mrow.empty and mrow["pct_dev"].iloc[0] < 0
+                    else "increase")
+            print(f"\n  {metric} {move}  (shares below are of this {word})")
             for dim in DIMENSIONS:
                 rows = [e for e in sup if e.metric == metric and e.dimension == dim]
                 if not rows:
@@ -161,8 +203,9 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
                 for e in rows[:4]:
                     name = e.segment if e.segment else "(traffic mix)"
                     q = "n/a" if e.q_value is None else f"{e.q_value:.4f}"
-                    print(f"      {name:22s} {e.contribution:+7.1%}  "
-                          f"q={q:>8s}  {e.verdict} [{e.basis}]")
+                    print(f"      {name:22s} {_fmt_share(e.contribution)} "
+                          f"{_fmt_abs(e.abs_contribution, metric):>12s}  "
+                          f"q={q:>8s}  {e.verdict}")
 
         # When the top segment of EVERY dimension is material, the movement is
         # concentrated in one intersection rather than caused by three separate
