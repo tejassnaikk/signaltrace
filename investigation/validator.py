@@ -52,7 +52,11 @@ class Result:
     q_value: float
     verdict: str
     detail: str = ""
-    testable: bool = True   # False when no valid statistical test exists
+    testable: bool = True   # False when no valid statistical test exists (AOV)
+    eligible: bool = True   # False when segment volume fails the eligibility
+                            # gate - a DIFFERENT reason for going untested than
+                            # `testable`: here a valid test exists in principle,
+                            # there just isn't enough data in THIS segment
 
 
 def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
@@ -74,7 +78,7 @@ def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
 
 
 def _verdict(contribution: float, q: float, kind: str = "segment",
-             testable: bool = True) -> str:
+             testable: bool = True, eligible: bool = True) -> str:
     c = abs(contribution) if not pd.isna(contribution) else 0.0
     if c < VALIDATOR["materiality_floor"]:
         return "immaterial"
@@ -83,10 +87,15 @@ def _verdict(contribution: float, q: float, kind: str = "segment",
     # so it is never "uncertain" and must not be scored as if it were.
     if kind == "mix":
         return "arithmetic"
-    # No valid test exists for this hypothesis (see _mean_test_unavailable).
-    # A missing test is NOT weak evidence - it is the absence of evidence, and
-    # must not be laundered into "material_but_uncertain".
-    if not testable:
+    # Untested for either of two DIFFERENT reasons, both landing on the same
+    # verdict: no valid test exists for this hypothesis at all (`testable`,
+    # see _MEAN_TEST_UNAVAILABLE), or a valid test exists but this segment's
+    # own volume is below the eligibility gate (`eligible`). Either way, a
+    # missing test is NOT weak evidence - it is the absence of evidence, and
+    # must not be laundered into "material_but_uncertain". The ledger's
+    # `basis` field keeps the two reasons distinguishable even though the
+    # verdict does not.
+    if not testable or not eligible:
         return "material_untested"
     if not pd.isna(q) and q < VALIDATOR["q_strong"]:
         return "strong"
@@ -137,10 +146,25 @@ def _prop_p(num_a: float, den_a: float, num_e: float, den_e: float) -> float:
 
 def validate_segments(metric: str, dimension: str,
                       act: pd.DataFrame, exp: pd.DataFrame,
-                      hid_base: str = "H") -> list[Result]:
+                      hid_base: str = "H",
+                      eligible: set[str] | None = None) -> list[Result]:
     """Test every segment of one dimension for one metric.
 
     act/exp are indexed by segment with columns sessions, transactions, revenue.
+
+    `eligible`, if given, marks which segments have enough volume to be
+    SIGNIFICANCE-TESTED (PLAN.md Section 2 / notes/baseline.md segment
+    viability). An ineligible segment's contribution is still computed and
+    kept - its share of the parent delta is real and needed for per-dimension
+    shares to sum to ~100% - but it is excluded from the BH family and never
+    receives a q-value; its verdict is material_untested (contribution >=
+    floor) or immaterial (below floor), the same two outcomes available to a
+    hypothesis with no valid test at all (`testable=False`), for the same
+    reason: a missing test must not be scored as if it were weak evidence.
+    Mix/within/interaction are unaffected either way - computed from the FULL
+    act/exp partition regardless, because the mix identity
+    (within_total + mix_total = blend_delta) only holds across the whole
+    partition.
     """
     results: list[Result] = []
     is_ratio = metric in ("conversion_rate", "aov")
@@ -188,12 +212,22 @@ def validate_segments(metric: str, dimension: str,
                 r["contribution"], r["abs_contribution"],
                 _poisson_p(r["actual"], r["expected"]), np.nan, "pending"))
 
+    # Mark ineligible segments (kept, not dropped: their contribution still
+    # counts toward the per-dimension share total). Marking, not filtering,
+    # is what makes shares sum to ~100% regardless of eligibility.
+    if eligible is not None:
+        for r in results:
+            if r.kind == "segment" and r.segment not in eligible:
+                r.eligible = False
+
     # Materiality gate BEFORE multiple-comparison correction: immaterial
     # hypotheses are not part of the tested family and must not inflate it.
     # Mix carries no p-value, so it is excluded from the BH family - including
     # it would shrink the family size and weaken every other correction.
+    # Ineligible segments are excluded the same way: a segment too thin to
+    # test validly must not enter the family either.
     material = [r for r in results
-                if r.kind != "mix" and r.testable
+                if r.kind != "mix" and r.testable and r.eligible
                 and not pd.isna(r.contribution)
                 and abs(r.contribution) >= VALIDATOR["materiality_floor"]]
     if material:
@@ -201,7 +235,7 @@ def validate_segments(metric: str, dimension: str,
         for r, q in zip(material, qs):
             r.q_value = float(q) if not np.isnan(q) else np.nan
     for r in results:
-        r.verdict = _verdict(r.contribution, r.q_value, r.kind, r.testable)
+        r.verdict = _verdict(r.contribution, r.q_value, r.kind, r.testable, r.eligible)
 
     return sorted(results,
                   key=lambda r: -abs(r.contribution if not pd.isna(r.contribution) else 0))

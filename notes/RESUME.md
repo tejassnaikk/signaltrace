@@ -31,4 +31,10 @@ Warnings about all-NaN slices are expected (segments with too few lags).
 - Judgment-call numbers: materiality 0.05, high_contribution 0.30,
   q 0.05/0.10, concentration note 0.40, concentration check max/median
   order ratio 20x (reasoned, not measured: sits between thin days ~1x and
-  the marginal whale 2016-11-26 at 45x)
+  the marginal whale 2016-11-26 at 45x), eligibility window 84 trailing days
+  (reasoned to match the longest detection window, not separately measured)
+- When a segment is BOTH ineligible (too little volume) AND has no valid
+  test in principle (AOV's mean-vs-proportion issue): basis is reported as
+  `ineligible_segment`, not `decomposition_only`. Judgment call, not
+  measured - eligibility treated as the more fundamental blocker since even
+  a valid test couldn't run on too little data.

@@ -94,8 +94,11 @@ Only these clear a >=50%-of-days eligibility gate:
 
 Every other segment (Social, Paid Search, Affiliates, Display, mobile,
 tablet, every non-US country) is **traffic-only** — testable for session
-anomalies but not for conversion or AOV. The hypothesis generator gates
-on this before emitting a test; untestable hypotheses are never generated.
+anomalies but not for conversion or AOV. The validator gates on this before
+Benjamini-Hochberg: an ineligible segment's contribution is still computed
+and kept (per-dimension shares must still sum to ~100%), but it is never
+significance-tested — it receives material_untested or immaterial, never a
+q-value.
 
 ### Attribution method — REVISED, two regimes instead of one
 
@@ -219,8 +222,10 @@ signal.
 
 ### 3.7 Hypothesis generation and validation — DONE (M3), REVISED
 Generator enumerates: factor hypotheses (which of sessions/conversion/AOV
-moved), segment hypotheses (gated by the eligibility table in Section 2 —
-untestable hypotheses are never generated), and a `mix` hypothesis for
+moved), segment hypotheses for every segment of every fired metric x
+dimension (gated by the eligibility table in Section 2 — an ineligible
+segment's contribution is kept for the per-dimension share total but never
+significance-tested), and a `mix` hypothesis for
 ratio metrics (Section 2). The seasonal hypothesis kind from the original
 plan is not generated (3.6); single-order concentration is handled as a
 detection-time reclassification (3.3), not a post-hoc hypothesis.
@@ -323,9 +328,34 @@ segments) and does not map onto the GA360 tree. A revised table needs:
   its expected outcome as "detected, not classified as seasonal" (honest
   about the limitation), or scope in a minimal calendar-advisory feature
   before M8
+- The negative-control incident (an untouched weekday, no injection) must be
+  run through the SAME forced-investigation path as every other benchmark
+  incident, not just left to the detector. Its purpose is to measure the
+  false-strong rate directly (see the OPEN ISSUE below) — a negative control
+  that only checks "did the detector fire" would miss overconfident verdicts
+  the validator produces on ordinary noise.
 
 Held-out set, in-distribution/held-out split, and the headline three-arm
 experiment are otherwise unchanged from the original plan.
+
+**OPEN ISSUE, not yet fixed (logged 2026-09-26):** the two segment-level
+significance tests both assume no overdispersion beyond what their model
+predicts — `_poisson_p` (sessions/transactions) assumes session arrivals are
+a pure Poisson process (variance = mean); `_prop_p` (conversion_rate) assumes
+a fixed per-session conversion probability with no day-to-day or
+between-session correlation. Neither assumption has been checked against
+this data, and there is direct evidence they are wrong: q-values as extreme
+as 4.8e-111 and 2.6e-103 appeared on ordinary segment tests in the reference
+dates above. Real q-values that small are implausible for daily
+business-metric segments with realistic day-to-day correlation; the more
+likely explanation is that both tests are anticonservative here, understating
+the true variance and therefore **over-awarding the `strong` verdict**. This
+has not been fixed — fixing it (e.g. a dispersion-corrected test, or an
+empirical/bootstrap null instead of the closed-form one) is its own scoped
+piece of work, not a one-line change. The M3 benchmark (Section 5) should
+measure its practical impact directly: the negative-control incident's
+false-strong rate is the number that tells us whether this is a paper
+concern or one that changes the reported verdicts.
 
 ---
 
@@ -399,11 +429,14 @@ there is a known-correct incident to show in it.
 | Injected incidents are self-designed ground truth | Unchanged concern; held-out set still the mitigation |
 | Multi-cause incidents reduced to one driver | Mitigated by per-dimension ranking + `CONCENTRATED` cross-dimension note |
 | Slow drift missed by point detection | Unchanged concern — no incident tests this yet |
-| Segment sparsity → spurious anomalies | **Resolved and generalized** — eligibility gating (Section 2) now applies at hypothesis-generation time, not just detection time |
+| Segment sparsity → spurious anomalies | **Resolved and generalized** — eligibility gating (Section 2) now applies at every validation, not just detection time; ineligible segments are marked (kept for their share) rather than dropped, and never significance-tested |
 | Scope creep into infrastructure | Holding — no scope creep so far |
-| Agent hallucinates ungrounded causes | Unchanged concern — sharpened by `material_untested`/`decomposition_only`, which the agent must learn to narrate correctly |
+| Agent hallucinates ungrounded causes | Unchanged concern — sharpened by `material_untested`/`decomposition_only`/`ineligible_segment`, which the agent must learn to narrate correctly |
 | **NEW: revenue-level detection is unreliable** | Resolved by moving detection to components (3.4–3.5) |
 | **NEW: naive statistical tests can be invalid for the metric type** | Found and fixed (AOV/proportion-test mismatch, 3.7) — worth stating explicitly as a lesson, since it is exactly the kind of error an LLM-only "just ask the model to test it" approach would not have caught |
+| **NEW: eligibility gate existed but was never wired in** | Found and fixed (fifth defect, notes/baseline.md) — segments 2% ratio-eligible were reporting `strong` verdicts |
+| **NEW: eligibility gate itself leaked future data** | Found and fixed — computed over the full 365-day range instead of a trailing window, the same class of leak `expectation.py` already guards against one layer down. Fixed with an 84-day trailing `asof` window (notes/baseline.md) |
+| **NEW: significance tests likely anticonservative (overdispersion)** | **OPEN, not fixed** — see Section 5. q-values as small as 1e-100+ observed; `strong` is likely over-awarded |
 | **NEW: pooled cross-dimension ranking double-counts** | Found and fixed (3.7) |
 | **NEW: seasonality is undetectable with 12 months of data** | Found, addressed by scope cut rather than a fix (3.6) — the strongest "document the limitation" item in the project |
 
@@ -433,8 +466,11 @@ dataset generalization test remains optional, not committed).
 > that retains negative results and distinguishes tested claims from
 > decomposition-only ones. Four real defects — an invalid statistical
 > test, a cross-dimension double-count, a pandas API break, and a
-> sign-display bug — were found and fixed by running the engine against
-> real detected anomalies rather than synthetic cases.
+> sign-display bug — were found by running the engine against real
+> detected anomalies rather than synthetic cases. A fifth — the
+> eligibility gate existed but was never wired into the orchestrator,
+> so untestable segments could report significance-based verdicts — was
+> found in a code/notes audit and confirmed by running on real data.
 
 The mix-shift/Simpson's-paradox handling and the honest scope cut on
 seasonality are the two strongest, most specific claims this project can

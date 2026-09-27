@@ -24,6 +24,7 @@ from detection.anomaly import annotate_concentration, detect_components
 from detection.config import COMPONENTS, EXCLUDE_DATES
 from investigation.attribution import multiplicative_contributions
 from investigation.evidence import Ledger
+from investigation.hypotheses import eligible_segments
 from investigation.validator import to_frame, validate_segments
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
 from metrics.segments import segment_series
@@ -145,7 +146,16 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
             act = act.reindex(exp.index)
             if act.empty:
                 continue
-            res = validate_segments(m, dim, act, exp, hid_base=f"{m[:4]}-{dim[:3]}")
+            # Segments below the volume gate (PLAN.md Section 2) are kept in
+            # the results - their share still counts toward the per-dimension
+            # total - but marked ineligible, which routes them to
+            # material_untested/immaterial instead of a significance-based
+            # verdict. Mix is computed over the full partition either way.
+            # asof=date: eligibility is judged on the trailing window BEFORE
+            # this date, never on the segment's future volume.
+            elig = set(eligible_segments(dim, m, con, asof=date))
+            res = validate_segments(m, dim, act, exp,
+                                    hid_base=f"{m[:4]}-{dim[:3]}", eligible=elig)
             led.record_many(res, metric=m)
             all_results.extend(res)
 

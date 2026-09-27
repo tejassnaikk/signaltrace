@@ -42,7 +42,8 @@ class EvidenceEntry:
     p_value: float | None
     q_value: float | None
     verdict: str
-    basis: str                   # identity | statistical_test | threshold | decomposition_only
+    basis: str                   # identity | statistical_test | threshold |
+                                  # decomposition_only | ineligible_segment
     detail: str = ""
     recorded_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -87,8 +88,13 @@ class Ledger:
             p_value=num(result.p_value),
             q_value=num(result.q_value),
             verdict=result.verdict,
-            basis=("decomposition_only"
-                   if not getattr(result, "testable", True)
+            # Two distinct reasons a segment can go untested, kept separate in
+            # `basis` even though they share the material_untested verdict:
+            # `ineligible_segment` = a valid test exists but this segment's
+            # volume fails the gate; `decomposition_only` = no valid test
+            # exists for this hypothesis at all (e.g. AOV is a mean).
+            basis=("ineligible_segment" if not getattr(result, "eligible", True)
+                   else "decomposition_only" if not getattr(result, "testable", True)
                    else self.BASIS.get(result.kind, "statistical_test")),
             detail=getattr(result, "detail", ""),
         )

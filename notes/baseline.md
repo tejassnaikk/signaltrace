@@ -248,6 +248,110 @@ is therefore nearly indistinguishable from the global one.
    BLENDED conversion with no per-segment change. Hard diagnosis, strong
    demonstration case if the system handles it.
 
+### Bug found and fixed: consequence 1 was never actually wired up
+Found in a code/notes audit (comparing `orchestrator.py` against PLAN.md
+Section 3.7's stated design), NOT by running the engine on real data -
+`hypotheses.eligible_segments()` existed since M3c but the orchestrator never
+called it, so every segment present on the fired date was tested as if
+eligible. Confirmed by running on real data, 2017-03-04 (conversion_rate
++564.4%): before the fix, channel=Social (2% ratio-eligible) reported
+**strong** at 14.6% contribution, q=0.0030, and country="Other" (an
+aggregation bucket, not a segment) reported **strong** at 46.7%, q=0.0000.
+Both looked like well-supported findings and were neither.
+
+Fixed in `validate_segments`: an ineligible segment's Result is KEPT, not
+dropped - its contribution still counts toward the per-dimension share total,
+which must sum to ~100% regardless of eligibility - but it is excluded from
+the BH family (no q-value) and its verdict is forced to material_untested
+(if its contribution clears the materiality floor) or immaterial (if not),
+the same two outcomes as a hypothesis with no valid test at all. The ledger
+records this with a distinct `basis` of `ineligible_segment`, kept separate
+from `decomposition_only` (AOV's mean-vs-proportion issue) even though both
+verdicts read material_untested. Mix is unaffected either way - it stays
+computed over the full act/exp partition, because the within/mix identity
+(within_total + mix_total = blend_delta) only holds across the whole
+partition.
+
+This is the fifth defect found in this project; unlike the other four (found
+by running the engine against real anomalies), this one was found by
+auditing the code against the plan and then confirmed on real data.
+
+### Second bug found and fixed: the fix above leaked future data
+Also found in code audit, not by running the engine. The first fix computed
+`eligible_segments()` over the FULL 365-day `fact_sessions` range, with no
+date filtering at all - so a segment's eligibility on 2016-12-26 was decided
+partly using its transaction volume from 2017-07-31, seven months in the
+future. This is exactly the temporal leak `expectation.py` already guards
+against for the baseline ("no point may use its own value or anything after
+it") - the eligibility gate had reintroduced the same class of bug one layer
+up.
+
+**Fixed:** `eligible_segments()` now takes an `asof` date and computes the
+>=50%-of-days volume gate over only the trailing 84 days strictly BEFORE that
+date (excluding `asof` itself and EXCLUDE_DATES). The orchestrator passes
+`asof=date` on every call. Without `asof` the function still scans the full
+history - retained for the exploratory printout in `hypotheses.py`'s
+`__main__` block ("which segments are ever viable at all"), which is not
+judging a specific incident and so has nothing to leak.
+
+**Effect on the three reference dates:** this correction changes the
+2017-03-04 and 2017-04-27 results NOT AT ALL - the 84-day trailing window
+and the full-year window happen to agree for those two dates. But it changes
+2016-12-26: the full-year fix had marked country=Vietnam/Thailand/Turkey
+ineligible (they don't clear the gate across the full year), which was
+ITSELF WRONG for that date - in the actual trailing 84 days (2016-10-03 to
+2016-12-25), those three countries did clear the gate, exactly as they had
+before any eligibility fix existed at all. The corrected, leak-free answer
+for 2016-12-26 is identical to the original (ungated) answer - not because
+gating doesn't matter, but because for this particular date, on the data
+actually available at the time, those three countries genuinely were
+eligible.
+
+#### Before / after, all three reference dates (per-segment)
+
+"Before" = no eligibility awareness at all (the original bug). "After" =
+current state: point-in-time eligibility, marked not dropped, asof-gated.
+Only rows whose verdict differs are shown; a segment not listed is unchanged
+(same verdict, same or basis-only-changed provenance). Per-dimension
+`contribution` sums are identical before and after in every group, because
+ineligible segments are marked, never dropped.
+
+| date | metric x dim | segment | contribution | q | before | after |
+|---|---|---|---|---|---|---|
+| 2017-03-04 | conversion_rate x channel | Social | 14.6% | 0.0030 | strong | **material_untested** (ineligible_segment) |
+| 2017-03-04 | conversion_rate x country | Other | 46.7% | 0.0000 | strong | **material_untested** (ineligible_segment) |
+| 2016-12-26 | sessions x country | Vietnam, Thailand, Turkey | 13.5%/10.5%/5.9% | ~0 | strong | **strong (unchanged)** - see note above |
+
+Per-dimension contribution-share sums, identical before and after: sessions
+x channel 1.000, x country 1.000, x device 1.000; conversion_rate x channel
+0.993, x country 1.027, x device 0.944 (device/country ratio metrics have
+exactly one eligible segment each - desktop, United States - so no flips are
+possible there); aov x channel 0.697 (within-share only, mix carries the
+rest), x country 0.959, x device 1.043.
+
+#### How much the eligible set actually varies across the detection range
+Measured over all 281 days of 2016-10-24 to 2017-07-31, one point-in-time
+eligibility calculation per day per (dimension, metric):
+
+| dimension | metric | min eligible | max eligible | segments that flip |
+|---|---|---|---|---|
+| channel | sessions | 6 | 6 | none |
+| channel | conversion_rate / aov | 2 | 3 | **Direct** (flickers across the 50% line 8 times: out 2017-01-21, in 01-27, out 01-28, in 01-31, out 02-09, in 02-16, out 03-19, in 03-21) |
+| device | sessions | 3 | 3 | none |
+| device | conversion_rate / aov | 1 | 1 | none (desktop only, always) |
+| country | sessions | 7 | 11 | **Thailand, Vietnam** (out from 2017-01-18), **Turkey** (out from 01-20), **Brazil** (out 02-13, back in 03-18, out again 06-21) |
+| country | conversion_rate / aov | 1 | 1 | none (United States only, always) |
+
+Direct is the channel already flagged as the marginal case in the segment
+viability table (55% of days eligible overall) - a rolling 84-day window
+naturally oscillates around a threshold that close to 50%. The four
+country-sessions flips are all lower-volume countries whose share of total
+sessions is thin enough that a normal-range fluctuation crosses the 30
+sessions/day gate. Ratio-metric eligibility is far more stable than
+session-count eligibility: only one dimension (channel) ever has more than
+one ratio-eligible channel move in or out, and country/device ratio
+eligibility never changes at all across the whole detection range.
+
 ---
 
 ## Scope decision: seasonality discrimination NOT built
