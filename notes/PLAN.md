@@ -338,6 +338,91 @@ segments) and does not map onto the GA360 tree. A revised table needs:
 Held-out set, in-distribution/held-out split, and the headline three-arm
 experiment are otherwise unchanged from the original plan.
 
+### 5.1 Pre-registered incident set (dates fixed 2026-09-27, no injector code yet)
+
+Eight incidents, five pre-registered weekday dates each (one gets a sixth,
+I3b, deliberately ineligible). Dates are chosen from the 281-day detection
+range, excluding: all 13 composed real-incident days, all 4 whale days, a
++/-3 calendar-day buffer around each of those (a clean date next to a real
+incident is still contaminated by that incident's own trailing-baseline
+window), and Thanksgiving/Black-Friday/Cyber-Monday/pre-Christmas week —
+real shopping-season dates that never crossed z>4 in this dataset but would
+still confound a synthetic incident with genuine seasonal demand. 143 of the
+201 weekdays in range survive this filter.
+
+| id | injected change | mechanism | dates |
+|---|---|---|---|
+| I1 | Organic Search sessions −50% | scale sessions AND transactions (⇒ revenue) by 0.5 for that segment only; conversion_rate, AOV held | 2016-10-24, 2016-11-18, 2016-12-20, 2017-01-16, 2017-02-10 |
+| I2 | Referral conversion −40% | scale transactions by 0.6 for that segment only; sessions, AOV held | 2016-10-26, 2016-11-21, 2016-12-21, 2017-01-17, 2017-02-20 |
+| I3 | Direct AOV −30%, Direct-eligible dates | scale revenue by 0.7 for that segment only; sessions, transactions held | 2016-10-27, 2016-11-22, 2017-01-06, 2017-01-31, 2017-02-27 |
+| I3b | Direct AOV −30%, Direct-INELIGIBLE date (pre-registered contrast case) | same mechanism as I3 | 2017-01-23 |
+| I4 | AOV −25% everywhere | scale revenue by 0.75 uniformly across every channel/device/country cell | 2016-10-31, 2016-11-30, 2017-01-09, 2017-02-03, 2017-02-28 |
+| I5 | Desktop conversion −50% | scale transactions by 0.5 for device=desktop only, every channel/country; sessions held | 2016-11-02, 2016-12-01, 2017-01-10, 2017-02-06, 2017-03-08 |
+| I6 | Mix shift: 30% of desktop sessions → mobile | move sessions between device=desktop and device=mobile (30% of desktop's actual sessions), each device's own conversion_rate/AOV held at its real value so its transactions/revenue move proportionally; total sessions unchanged | 2016-11-04, 2016-12-02, 2017-01-11, 2017-02-07, 2017-03-09 |
+| I7 | Compound: Organic Search sessions −40% + Referral conversion −30%, same day | I1's mechanism (factor 0.6) + I2's mechanism (factor 0.7), independently, same date | 2016-11-08, 2016-12-05, 2017-01-12, 2017-02-08, 2017-03-10 |
+| C1 | Negative control — no injection, forced investigation anyway | — | 2016-11-10, 2017-01-13, 2017-02-09, 2017-03-13, 2017-04-11 |
+
+**I5 redesign, flagged not re-approved:** the original proposal was "desktop
+AND US" jointly. Dropped — desktop is 91% of transactions and US is 94%, so
+their overlap is nearly the whole business, and injecting into both at once
+would be nearly indistinguishable from I4-style broad-based. Injecting into
+desktop ALONE is more informative: it tests whether the country and channel
+dimensions correctly show a CORRELATED (not independently caused) signal,
+since desktop skews heavily toward US and toward no one channel in
+particular.
+
+**Untouched-segment convention (all incidents):** every cell not named by an
+incident keeps its REAL historical value for that date, not its seasonal-naive
+expected value. Noise from untouched segments is real noise, and is exactly
+what the "no other segment materially implicated" pass criteria below are
+checking survives.
+
+**Forced investigation (all incidents):** every incident runs the
+segment/dimension validation for its injected metric(s) regardless of
+whether `detect_components` would fire on the modified day. Whether the
+detector ALSO fires is recorded as a separate detection-power data point,
+per the standing decision (baseline.md, "PRE-REGISTERED before result") that
+detection and diagnosis are scored separately.
+
+**Dataset-imbalance caveat (I1, I2, I3, I3b, I7 — single-channel incidents):**
+desktop and United States already hold ~90%+ of revenue and transactions in
+this dataset (notes/baseline.md, "Structural pattern"). Expect them to
+ALSO appear as the top device/country segments for any single-channel
+incident almost regardless of which channel is targeted or its magnitude —
+this is a restatement of the dataset's known imbalance, not evidence the
+engine specifically localized the cause to device/country. The CHANNEL
+dimension is the only one that's actually informative for these incidents;
+CONCENTRATED firing on device+country+channel together is EXPECTED and not
+separately scored as a success.
+
+### 5.2 Scoring rubric (numeric tolerances)
+
+Every incident is scored on the injected metric's channel/device/country
+decomposition from a forced `investigate()` call. "Dominant segment" means
+the injected segment's contribution share is the largest in its dimension.
+
+| incident | pass condition |
+|---|---|
+| I1 | channel: Organic Search within-share >= 70%, verdict=strong, q<0.05; no other channel individually >= 30% share; revenue factor table: sessions share of the move >= 60% |
+| I2 | channel: `|mix_share|` < 5pt (guards against contamination — only Referral's rate moved, no session reallocation); Referral within-share >= 70%, verdict=strong, q<0.05 |
+| I3 (eligible dates) | channel: Direct within-share >= 70%, verdict=material_untested, basis=decomposition_only (AOV has no valid test regardless of eligibility) |
+| I3b (ineligible date) | channel: Direct's contribution is KEPT (still counts toward the channel-dimension share sum, ~100% +/- normal residual), verdict=material_untested, **basis=ineligible_segment** (not decomposition_only — this is the exact case the RESUME.md priority judgment call is for: Direct here is both ineligible AND has no valid AOV test in principle, and ineligible must win) |
+| I4 | for EVERY dimension (channel, device, country): each segment's within-share is within +/-10pt of that segment's baseline REVENUE share (notes/baseline.md segment viability table) — exact under a uniform proportional cut, since within_share reduces algebraically to baseline revenue share when the rate cut is uniform; `|mix_share|` < 5pt in every dimension; CONCENTRATED must NOT fire (this is the control case for false localization — a broad-based cause must not look like a segment-specific one) |
+| I5 | device: desktop within-share >= 90%, verdict=strong, q<0.05; country: United States within-share >= 70%, verdict=strong; channel: no single channel >= 40% share AND at least 2 channels each >= 15% (the true cause is device-level and should NOT resolve to one clean channel story); CONCENTRATED is expected NOT to fire under the current all-three-dimensions rule (channel doesn't clear 40%) — pre-registered as a known gap: a genuinely 2-of-3-dimension-concentrated incident gets no annotation today, not a bug to fix in this benchmark |
+| I6 | device: `|within_total| / |blend_delta|` < 10% (mix carries >=90% of the blend delta), mix verdict=arithmetic, basis=identity; desktop within-share and mobile within-share each < 10pt (their OWN rates didn't change, only their weights); **channel (and country) within-effects are EXPECTED to show one or more segments with a plausible-looking rate change** — this is a documented limitation, not a scored failure: per-dimension decomposition cannot see that the true cause is a shift in a DIFFERENT dimension (device), so a device-level mix shift leaks into the channel/country dimensions' own within terms. No pass/fail check on channel or country for this incident. |
+| I7 | sessions x channel: Organic Search within-share >= 70%, verdict=strong; conversion_rate x channel: Referral within-share >= 70%, verdict=strong, AND Organic Search's conversion_rate within-share < 10pt (confirms the two injections didn't cross-contaminate); revenue factor table: `|aov contribution|` < 5pt (AOV wasn't touched), sessions and conversion_rate factor contributions each >= 20% (both compound causes register; log-space contributions sum to 1.0 by construction, already proven exact in attribution.py) |
+| C1 | not pass/fail — a MEASUREMENT. Report the false-strong rate: count of (segment, metric) pairs reaching verdict=strong across all 5 dates x 3 dimensions x {sessions, conversion_rate}, out of the total tested. Given the extreme q-values already observed on real fired dates (q as small as 4.8e-111), **it is pre-registered that some false-strongs are expected** — this measurement exists to quantify the anticonservative-test issue (Section 5.3, below), not to confirm the tests are clean |
+
+Ground truth (injected magnitude, target segment, expected share range,
+expected verdict/basis per the table above) goes into a file the engine
+never reads or imports — planned as `evaluation/ground_truth/<incident_id>.json`,
+one file per incident, consumed only by the (not-yet-written) scoring
+script. Neither `detection/` nor `investigation/` will ever reference this
+path; the values above ARE that file's eventual content, written here first
+so the rubric can be reviewed before any code exists.
+
+### 5.3 Open issue
+
 **OPEN ISSUE, not yet fixed (logged 2026-09-26):** the two segment-level
 significance tests both assume no overdispersion beyond what their model
 predicts — `_poisson_p` (sessions/transactions) assumes session arrivals are
@@ -356,6 +441,10 @@ piece of work, not a one-line change. The M3 benchmark (Section 5) should
 measure its practical impact directly: the negative-control incident's
 false-strong rate is the number that tells us whether this is a paper
 concern or one that changes the reported verdicts.
+
+Any `q<0.05` pass condition above (I1, I2, I5, I7) should therefore be read
+alongside C1's measured false-strong rate, not treated as independent
+confirmation that the localization is correct.
 
 ---
 
