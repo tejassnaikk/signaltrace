@@ -1,0 +1,52 @@
+{
+  "incident_id": "I7",
+  "description": "Compound: Organic Search sessions -40% + Referral conversion -30%, same day",
+  "mechanism": {
+    "kind": "compound",
+    "mechanisms": [
+      {
+        "kind": "scale_segment",
+        "dimension": "channel",
+        "segment": "Organic Search",
+        "sessions_factor": 0.6,
+        "transactions_factor": 0.6,
+        "revenue_factor": 0.6
+      },
+      {
+        "kind": "scale_segment",
+        "dimension": "channel",
+        "segment": "Referral",
+        "sessions_factor": 1.0,
+        "transactions_factor": 0.7,
+        "revenue_factor": 0.7
+      }
+    ]
+  },
+  "note": "I1's mechanism (factor 0.6) and I2's mechanism (factor 0.7), applied independently to the same date. Note I7 uses smaller magnitudes than I1/I2's own standalone incidents (-40%/-30% here vs -50%/-40% there).",
+  "dates": [
+    "2017-02-02",
+    "2017-02-08",
+    "2017-05-23",
+    "2017-06-28",
+    "2017-07-04"
+  ],
+  "dates_revision": "re-screened 2026-09-27; supersedes 2016-11-08/12-05/2017-01-12/02-08/03-10, of which only 2017-02-08 passed both sub-conditions simultaneously when actually simulated. Both I1's and I2's individual date-selection problems apply here at once, and I7's own conversion cut (-30%) is smaller than I2's already power-limited -40%, making it the binding constraint: only 9/104 non-colliding candidate dates clear the conversion_rate sub-condition alone, vs 77/104 for sessions. Only 3/104 cleared all three checks (sessions, conversion_rate, cross-contamination) as strict gates -- too few to fill 5 slots, hence cross-contamination and the revenue-factor shares were downgraded to reported (see pass_condition_revision) to recover 7 viable dates. See notes/PLAN.md 5.1.",
+  "forced_metrics": ["sessions", "conversion_rate"],
+  "pass_condition": {
+    "sessions_channel": {
+      "segment": "Organic Search",
+      "rule": "largest_magnitude_correctly_signed_strong",
+      "description": "same as I1's revised condition."
+    },
+    "conversion_rate_channel": {
+      "segment": "Referral",
+      "rule": "largest_magnitude_correctly_signed_plausible_or_better",
+      "description": "same as I2's revised condition (verdict>=plausible, not strong -- I7's -30% cut is even more power-limited than I2's -40%)."
+    },
+    "cross_contamination": {
+      "description": "Organic Search's own conversion_rate within-share, and the revenue-factor table's sessions/conversion_rate/aov shares, are reported only, not gated -- same denominator fragility as I1's revenue-factor share."
+    }
+  },
+  "pass_condition_revision": "revised 2026-09-27: both sub-conditions rewritten to magnitude-rank (I1/I2 style). Cross-contamination and revenue-factor shares demoted from gates to reported numbers because strict-gating all three left only 3 of 104 candidate dates viable, too few to fill 5 slots. See notes/PLAN.md 5.2.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I7"
+}

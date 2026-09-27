@@ -155,16 +155,23 @@ def validate_segments(metric: str, dimension: str,
     `eligible`, if given, marks which segments have enough volume to be
     SIGNIFICANCE-TESTED (PLAN.md Section 2 / notes/baseline.md segment
     viability). An ineligible segment's contribution is still computed and
-    kept - its share of the parent delta is real and needed for per-dimension
-    shares to sum to ~100% - but it is excluded from the BH family and never
-    receives a q-value; its verdict is material_untested (contribution >=
-    floor) or immaterial (below floor), the same two outcomes available to a
+    kept - its share of the parent delta is real, and dropping it would make
+    the eligible segments' own reported shares look more complete than they
+    are - but it is excluded from the BH family and never receives a
+    q-value; its verdict is material_untested (contribution >= floor) or
+    immaterial (below floor), the same two outcomes available to a
     hypothesis with no valid test at all (`testable=False`), for the same
     reason: a missing test must not be scored as if it were weak evidence.
     Mix/within/interaction are unaffected either way - computed from the FULL
     act/exp partition regardless, because the mix identity
-    (within_total + mix_total = blend_delta) only holds across the whole
-    partition.
+    (within_total + mix_total + interaction_total = blend_delta) only holds
+    across the whole partition. NOTE: per-segment shares summing to ~100% is
+    an exact identity for the additive metrics (sessions, transactions) but
+    NOT generally true for the ratio metrics here - a ratio segment's
+    `contribution` is `within_share` alone, excluding both mix and the
+    never-surfaced interaction term, so the visible shares can be far from
+    ~100% on an ordinary day where blend_delta is small (found and corrected
+    2026-09-27, PLAN.md Section 2).
     """
     results: list[Result] = []
     is_ratio = metric in ("conversion_rate", "aov")
@@ -212,9 +219,12 @@ def validate_segments(metric: str, dimension: str,
                 r["contribution"], r["abs_contribution"],
                 _poisson_p(r["actual"], r["expected"]), np.nan, "pending"))
 
-    # Mark ineligible segments (kept, not dropped: their contribution still
-    # counts toward the per-dimension share total). Marking, not filtering,
-    # is what makes shares sum to ~100% regardless of eligibility.
+    # Mark ineligible segments (kept, not dropped: their contribution stays
+    # visible rather than silently making the ELIGIBLE segments' own shares
+    # look more complete than they are). NOT "so shares sum to ~100%" - that
+    # only holds exactly for additive metrics; for ratio metrics the visible
+    # shares (within + mix) omit interaction and can be far from ~100% on an
+    # ordinary noisy day, regardless of eligibility marking (PLAN.md Section 2).
     if eligible is not None:
         for r in results:
             if r.kind == "segment" and r.segment not in eligible:

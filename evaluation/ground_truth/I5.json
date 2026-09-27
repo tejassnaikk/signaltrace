@@ -1,0 +1,43 @@
+{
+  "incident_id": "I5",
+  "description": "Desktop conversion -50%",
+  "mechanism": {
+    "kind": "scale_segment",
+    "dimension": "device",
+    "segment": "desktop",
+    "sessions_factor": 1.0,
+    "transactions_factor": 0.5,
+    "revenue_factor": 0.5
+  },
+  "note": "AOV held: revenue scaled by the same factor as transactions. Redesigned to desktop ALONE (not desktop+US jointly) -- see notes/PLAN.md 5.1, 'I5 redesign'.",
+  "dates": [
+    "2016-11-02",
+    "2016-12-01",
+    "2017-01-10",
+    "2017-02-06",
+    "2017-03-08"
+  ],
+  "dates_revision": "unchanged 2026-09-27 -- device/country conditions pass on 3/5 original dates (evaluation/score.py, corrects an earlier manual check that missed 2017-01-10's shortfall); channel condition passes on 5/5 once corrected to filter to ratio-eligible channels only. No re-screen: the 2 device/country misses are logged as expected variability (see pass_condition note), not swapped out, same reasoning C1 keeps its dates unscreened -- date-shopping away every noisy day biases the benchmark.",
+  "forced_metrics": ["conversion_rate"],
+  "pass_condition": {
+    "device": {
+      "dimension": "device", "segment": "desktop",
+      "within_share_min": 0.90, "verdict": "strong", "q_max": 0.05,
+      "note": "left as an absolute threshold, unchanged -- desktop's near-100% share of real conversion_rate movement is structural (notes/baseline.md 'Structural pattern'), not noise to screen for."
+    },
+    "country": {
+      "dimension": "country", "segment": "United States",
+      "within_share_min": 0.70, "verdict": "strong",
+      "note": "same structural reasoning as device, left unchanged."
+    },
+    "channel": {
+      "dimension": "channel",
+      "rule": "top2_magnitude_ratio",
+      "description": "the largest-magnitude ratio-eligible channel's |actual-expected| for conversion_rate is less than 2x the second-largest's -- replaces the original '%-share <40%, >=2 channels >=15%' design.",
+      "ratio_max": 2.0
+    },
+    "marginal_dates_note": "Two of 5 original dates miss device/country, per evaluation/score.py: (1) 2016-12-01 -- device contribution=2.02/verdict=material_but_uncertain, country contribution=2.80/verdict=material_but_uncertain, both short on VERDICT despite a large raw share. (2) 2017-01-10 -- device contribution=0.880/verdict=strong, i.e. verdict is fine but the raw share (87.96%) is just under the 90% floor; country contribution=0.909/verdict=strong, clears its 70% floor fine. Two different failure reasons, both logged as expected variability (Section 5.3 overdispersion), not fixed by date substitution. Channel top2 ratio on all 5 dates (eligible channels only): 1.21/1.86/1.85/1.05/1.12 -- all clear <2.0."
+  },
+  "pass_condition_revision": "revised 2026-09-27: device/country conditions confirmed unchanged (structural, not noise). Channel condition replaced with a magnitude-ratio check for the same reason as I1's fix, PLUS a second, distinct problem specific to I5: only 2-3 channels are ever ratio-eligible for conversion_rate at all, so a '%-share <40%' cap is close to mechanically unsatisfiable by construction when only 2 channels are splitting ~100% of the eligible signal, independent of any real noise. See notes/PLAN.md 5.2.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I5"
+}

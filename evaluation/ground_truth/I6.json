@@ -1,0 +1,32 @@
+{
+  "incident_id": "I6",
+  "description": "Mix shift: 30% of desktop sessions move to mobile",
+  "mechanism": {
+    "kind": "move_sessions",
+    "dimension": "device",
+    "from_segment": "desktop",
+    "to_segment": "mobile",
+    "fraction": 0.30
+  },
+  "note": "Each device's own conversion_rate/AOV is held at its real (whole-device, that date) value: desktop loses sessions/transactions/revenue in the same proportion (preserves its own rate exactly); mobile gains sessions at its own real rate. Total sessions unchanged. Implemented in evaluation/injector.py's _move_sessions, using largest-remainder rounding (_largest_remainder_round), not plain round() -- see pass_condition_revision.",
+  "dates": [
+    "2016-11-04",
+    "2016-12-02",
+    "2017-01-11",
+    "2017-02-07",
+    "2017-03-09"
+  ],
+  "dates_revision": "unchanged 2026-09-27 -- verified via full injection simulation (with the corrected mechanism) that the revised device-dimension condition transfers cleanly on all 5 original dates, no re-screen needed.",
+  "forced_metrics": ["conversion_rate"],
+  "pass_condition": {
+    "device": {
+      "mix_verdict": "arithmetic",
+      "mix_basis": "identity",
+      "rule": "neither_device_reaches_strong",
+      "description": "mix is an exact identity (unchanged, always true by construction). Neither desktop's nor mobile's own within-effect reaches verdict=strong -- replaces '|within_total|/|blend_delta| < 10%; desktop/mobile within-share each < 10pt'."
+    },
+    "channel_and_country": "no pass/fail check -- unchanged limitation: per-dimension decomposition cannot see the true cause lives in a different dimension (device), so a device-level mix shift leaks into channel/country's own within terms. Expected to show one or more segments with a plausible-looking rate change."
+  },
+  "pass_condition_revision": "revised 2026-09-27: the %-threshold design assumed low real within noise, but device-level conversion_rate has real day-to-day CV ~0.44 (notes/baseline.md dispersion table) even with NO injection -- confirmed desktop's real, uninjected within-share was already 73%-199% of blend_delta on all 5 dates before any mix shift was applied. A verdict-based check absorbs that noise correctly since BH/q already discounts it; a raw %-share does not. Verified via full simulation: desktop lands on material_but_uncertain (never strong), mobile on material_untested/immaterial, on all 5 original dates. See notes/PLAN.md 5.2.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I6"
+}

@@ -1,0 +1,26 @@
+{
+  "incident_id": "I3b",
+  "description": "Direct AOV -30%, Direct-INELIGIBLE date (pre-registered contrast case)",
+  "mechanism": {
+    "kind": "scale_segment",
+    "dimension": "channel",
+    "segment": "Direct",
+    "sessions_factor": 1.0,
+    "transactions_factor": 1.0,
+    "revenue_factor": 0.7
+  },
+  "note": "Same mechanism as I3. The only difference is the date: chosen so Direct's 84-day trailing eligibility window marks it INELIGIBLE, not because the mechanism differs.",
+  "dates": ["2017-01-23"],
+  "dates_revision": "unchanged 2026-09-27 -- date itself was never in question, only the pass_condition (see revision below).",
+  "forced_metrics": ["aov"],
+  "pass_condition": {
+    "dimension": "channel",
+    "segment": "Direct",
+    "eligible": false,
+    "verdict": "material_untested",
+    "basis": "ineligible_segment",
+    "description": "Direct's row is present in the results (kept, not filtered out), eligible=False, verdict=material_untested, basis=ineligible_segment (not decomposition_only -- this is the RESUME.md priority judgment call: Direct here is both ineligible AND has no valid AOV test in principle, and ineligible must win)."
+  },
+  "pass_condition_revision": "corrected 2026-09-27, after being directly verified rather than inherited from I3's status (per instruction not to assume 'unaffected' just because the mechanism is shared). eligible_segments('channel','aov',asof=2017-01-23) = [Organic Search, Referral] confirms Direct is genuinely out, matching baseline.md's documented flicker window (out 2017-01-21, in 01-27); Direct's row verdict/basis matched the original claim exactly. But the original claim also said Direct's contribution sums to '~100% +/- normal residual' across the channel dimension -- checked directly and this is FALSE: the actual channel-dimension AOV contribution sum on this date is 14.49 (1449%), the same shared-noisy-denominator problem (factor (1)) hitting AOV's ratio_decomposition exactly as it hits conversion_rate elsewhere. That clause is dropped, not fixed -- per the General principle (notes/PLAN.md 5), a %-of-blend_delta number is the wrong kind of statistic to assert here at all. The property that's actually true and actually load-bearing (Direct's row is present, not dropped) replaces it.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I3b"
+}

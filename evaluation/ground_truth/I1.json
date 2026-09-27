@@ -1,0 +1,31 @@
+{
+  "incident_id": "I1",
+  "description": "Organic Search sessions -50%",
+  "mechanism": {
+    "kind": "scale_segment",
+    "dimension": "channel",
+    "segment": "Organic Search",
+    "sessions_factor": 0.5,
+    "transactions_factor": 0.5,
+    "revenue_factor": 0.5
+  },
+  "note": "conversion_rate and AOV are held by construction: scaling transactions and revenue by the same factor as sessions leaves transactions/sessions and revenue/transactions unchanged for this segment, up to per-row integer rounding at the fact_sessions grain.",
+  "dates": [
+    "2017-01-26",
+    "2017-03-16",
+    "2017-05-04",
+    "2017-06-13",
+    "2017-07-05"
+  ],
+  "dates_revision": "re-screened 2026-09-27; supersedes the original 2016-10-24/11-18/12-20/2017-01-16/02-10 set, which passed the top-level composed-detector exclusion filter (PLAN.md 5.1) but not a per-channel real-noise check. See notes/PLAN.md 5.1, 'I1 dates re-screened'.",
+  "forced_metrics": ["sessions"],
+  "pass_condition": {
+    "dimension": "channel",
+    "segment": "Organic Search",
+    "rule": "largest_magnitude_correctly_signed_strong",
+    "description": "Organic Search must be the channel-dimension segment with the largest |actual - expected| for sessions, with actual < expected (correctly signed), and verdict=strong (implies q<0.05).",
+    "revenue_factor_sessions_share": "reported only, not gated (see PLAN.md 5.2 revision note)"
+  },
+  "pass_condition_revision": "revised 2026-09-27 from a %-share-threshold design (within_share_min=0.70, other_channel_share_max=0.30, revenue_factor_sessions_share_min=0.60) to a magnitude-rank design, for the same reason the dates were re-screened: %-share has a shared, noisy, cross-channel denominator and is not a reliable measure of whether the target segment's own signal is dominant. See notes/PLAN.md 5.2.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I1"
+}

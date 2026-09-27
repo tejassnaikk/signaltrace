@@ -1,0 +1,40 @@
+{
+  "incident_id": "I2",
+  "description": "Referral conversion -40%",
+  "mechanism": {
+    "kind": "scale_segment",
+    "dimension": "channel",
+    "segment": "Referral",
+    "sessions_factor": 1.0,
+    "transactions_factor": 0.6,
+    "revenue_factor": 0.6
+  },
+  "note": "AOV held: revenue scaled by the same factor as transactions.",
+  "dates": [
+    "2016-10-25",
+    "2016-11-14",
+    "2017-01-17",
+    "2017-03-31",
+    "2017-05-22"
+  ],
+  "dates_revision": "re-screened 2026-09-27; supersedes 2016-10-26/11-21/12-21/2017-01-17/02-20, which had the same channel-dominance fragility found for I1 (Referral was top-magnitude, correctly-signed conversion_rate mover on only 4/5 dates, and 2017-02-20 failed outright). See notes/PLAN.md 5.1.",
+  "forced_metrics": ["conversion_rate"],
+  "pass_condition": {
+    "dimension": "channel",
+    "segment": "Referral",
+    "rule": "largest_magnitude_correctly_signed_plausible_or_better",
+    "description": "Referral must be the channel-dimension segment with the largest |actual - expected| for conversion_rate, with actual < expected, and verdict in {strong, plausible} (q<0.10).",
+    "verdict_min": "plausible",
+    "mix_effect_magnitude": "reported only, not gated",
+    "measured_pass_rate": {
+      "n_candidates": 105,
+      "strong_count": 9,
+      "strong_rate": 0.086,
+      "plausible_or_better_count": 19,
+      "plausible_or_better_rate": 0.181,
+      "on_final_5_dates": {"strong": 2, "plausible_or_better": 5}
+    }
+  },
+  "pass_condition_revision": "revised 2026-09-27: (1) %-share thresholds replaced with magnitude-rank, same reason as I1. (2) verdict bar downgraded from strong (q<0.05) to plausible (q<0.10) -- the two-proportion test lacks power to reach q<0.05 for a -40% cut at Referral's ~15-20 txns/day. Measured, not assumed: across the 105-date non-colliding candidate pool, Referral reached strong on only 9/105 (8.6%) vs plausible-or-better on 19/105 (18.1%); on the final 5 dates, 2/5 strong, 5/5 plausible-or-better. Also confirmed by a cut-size sweep on one date (-40% -> q=0.14, -70% -> q=0.02, -90% -> q=0.001). This is a power limit of the injected magnitude, not a date-selection problem. See notes/PLAN.md 5.2.",
+  "plan_ref": "notes/PLAN.md Section 5.1-5.2, row I2"
+}

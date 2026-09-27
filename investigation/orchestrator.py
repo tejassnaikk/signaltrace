@@ -80,7 +80,23 @@ def _fmt_abs(value: float, metric: str) -> str:
     return f"{value:+,.2f}"
 
 
-def investigate(date, con=None, verbose: bool = True) -> dict:
+def investigate(date, con=None, verbose: bool = True,
+                force: list[str] | None = None,
+                incident_id: str | None = None) -> dict:
+    """`force`: metric names (from REVENUE_FACTORS) to run segment/dimension
+    validation on regardless of whether detect_components fired on this date
+    (PLAN.md 5.1, "Forced investigation") - used by the M3 benchmark
+    (evaluation/injector.py) since most injected incidents don't cross the
+    z>4 threshold on their own (notes/baseline.md, "Detection power").
+    Forcing a metric also bypasses the single-order suppression gate (3.3)
+    for that metric on this call only; ordinary detector-driven investigation
+    is unaffected either way, since `fired`/`suppressed` below are still
+    computed exactly as before and detection firing is still recorded as its
+    own data point.
+
+    `incident_id`: overrides the default `inc_YYYYMMDD` id. The benchmark
+    harness passes a namespaced id (e.g. "I1_2016-10-24") so synthetic runs
+    can never collide with a real investigation's id."""
     date = pd.Timestamp(date)
     own = con is None
     con = con or duckdb.connect(DB)
@@ -96,7 +112,7 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
     fired = today[today["is_anomaly"] & ~today["single_order_driven"]]
     suppressed = today[today["is_anomaly"] & today["single_order_driven"]]
 
-    incident_id = f"inc_{date:%Y%m%d}"
+    incident_id = incident_id or f"inc_{date:%Y%m%d}"
     led = Ledger(incident_id, date)
 
     if verbose:
@@ -122,9 +138,11 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
                       f"{r.max_over_median:.0f}x the day's median order")
         led.record(_R())
 
-    # 2-4. segment investigation for each fired metric
+    # 2-4. segment investigation for each fired metric, plus any metric the
+    # caller forced regardless of detection (see the `force` docstring above)
+    metrics_to_run = sorted(set(fired["metric"]) | set(force or []))
     all_results = []
-    for m in fired["metric"].unique():
+    for m in metrics_to_run:
         weeks = COMPONENTS[m]["weeks"]
         num, den = {"conversion_rate": ("transactions", "sessions"),
                     "aov": ("revenue", "transactions")}.get(m, (m, None))
@@ -203,7 +221,11 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
         if not sup:
             print("  none reached the materiality floor")
         for metric in sorted({e.metric for e in sup}):
-            mrow = fired[fired["metric"] == metric]
+            # today (not fired): a forced metric that didn't cross the
+            # detector's threshold still has a real pct_dev here, and using
+            # `fired` for a forced-only metric would print a blank move and
+            # default the direction word to "increase" regardless of sign.
+            mrow = today[today["metric"] == metric]
             move = (f"{mrow['pct_dev'].iloc[0]:+.1%}" if not mrow.empty else "")
             word = ("decline" if not mrow.empty and mrow["pct_dev"].iloc[0] < 0
                     else "increase")
@@ -245,6 +267,7 @@ def investigate(date, con=None, verbose: bool = True) -> dict:
     if own:
         con.close()
     return {"incident_id": incident_id, "date": date, "fired": fired,
+            "suppressed": suppressed, "today": today,
             "ledger": led, "factors": factor_tbl,
             "results": to_frame(all_results) if all_results else pd.DataFrame()}
 
