@@ -14,11 +14,16 @@ Design notes (from notes/baseline.md):
 """
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from detection.config import EXCLUDE_DATES
+
 WEEKS = 4                      # trailing same-weekday window
-EXCLUDE_DATES = {"2016-08-03"}  # data gap: 2890 sessions, 0 txns, 0 revenue
 
 
 def seasonal_naive_baseline(s: pd.Series, weeks: int = WEEKS) -> pd.Series:

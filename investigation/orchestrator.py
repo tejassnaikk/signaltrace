@@ -21,7 +21,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from detection.anomaly import annotate_concentration, detect_components
-from detection.config import COMPONENTS
+from detection.config import COMPONENTS, EXCLUDE_DATES
 from investigation.attribution import multiplicative_contributions
 from investigation.evidence import Ledger
 from investigation.validator import to_frame, validate_segments
@@ -36,10 +36,14 @@ def _seg_expectation(seg: pd.DataFrame, col: str, weeks: int) -> pd.DataFrame:
     """Trailing same-weekday median per segment. Same method as the top level,
     applied within each segment. Strictly backward-looking."""
     piv = seg.pivot(index="date", columns="segment", values=col).sort_index()
+    # Mask known bad days BEFORE taking lags, as build_expectation does at the
+    # top level, so the 2016-08-03 data gap cannot enter any segment baseline.
+    clean = piv.copy()
+    clean.loc[clean.index.isin(pd.to_datetime(sorted(EXCLUDE_DATES)))] = np.nan
     # Median across the `weeks` same-weekday lags, computed per column.
     # (pandas 2.x removed groupby(axis=1), so stack the lags and take the
     # element-wise median directly.)
-    lags = np.stack([piv.shift(7 * k).to_numpy(dtype=float)
+    lags = np.stack([clean.shift(7 * k).to_numpy(dtype=float)
                      for k in range(1, weeks + 1)])
     exp = pd.DataFrame(np.nanmedian(lags, axis=0),
                        index=piv.index, columns=piv.columns)

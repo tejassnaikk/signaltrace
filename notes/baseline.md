@@ -268,3 +268,42 @@ anomalies.
 
 This is a dataset limitation, not an implementation gap. Year-over-year
 comparison is the standard solution and requires at least two years.
+
+---
+
+## Detection power — PRE-REGISTERED "BEFORE" RESULT (recorded 2026-09-26)
+
+Measured before any incident injector existed, against the M2 detector as
+committed. For each component: the fraction of detection-range days
+(2016-10-24 to 2017-07-31) on which a clean single-day multiplicative shift
+of X% in the actual value, baseline untouched, would cross |z| > 4.
+
+| | -30% | -50% | -70% | -90% | +30% | +50% | +100% | +200% |
+|---|---|---|---|---|---|---|---|---|
+| sessions | 7% | 15% | 22% | 64% | 11% | 16% | 58% | 94% |
+| conversion_rate | 0% | 0% | 0% | 5% | 9% | 15% | 35% | 74% |
+| aov | 1% | 0% | 0% | 2% | 7% | 11% | 29% | 67% |
+
+Robust scale: sessions 508.5, conversion_rate 0.004066, aov 38.11 (absolute
+units, one MAD pooled across all weekdays).
+
+**Finding: the detector cannot see declines in conversion or AOV.** The
+residual is in absolute units with one pooled MAD, and residual spread is
+~30-40% of the metric's level, so a 4-sigma drop exceeds 100% of the metric -
+impossible for a positive quantity. Consistent with the real data: none of the
+13 flagged days is a conversion or AOV decline.
+
+Consequences:
+- The -12% AOV incident that justified AOV as an independent detector (see
+  "DECISION" above) would fire on 0-1% of days.
+- M2's separability gate ("injected incidents land outside the FP floor") was
+  never tested; this table is the first measurement of it.
+- A device mix-shift incident cannot fire at any magnitude: all-desktop raises
+  blended conversion only ~24%; all-mobile lowers it ~66%, an undetectable
+  decline.
+
+Decision: detection and diagnosis are scored separately in the M3 benchmark
+(diagnosis via forced investigation of the injected metric). Log-space
+residuals become milestone M2b after the M3 benchmark passes, re-measured with
+the same injector as the "after" result. Inflating incident magnitudes until
+they fire is rejected.

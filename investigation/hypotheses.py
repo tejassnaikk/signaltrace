@@ -25,7 +25,7 @@ MIN_ELIGIBLE_FRACTION = 0.50  # segment must clear the gate on >=50% of history
 class Hypothesis:
     """A testable claim. `kind` decides which validator handles it."""
     hid: str
-    kind: str                    # factor | segment | seasonal | concentration
+    kind: str                    # factor | segment
     metric: str
     dimension: str | None = None
     segment: str | None = None
@@ -77,20 +77,9 @@ def generate(anomalous_metrics: list[str], date: pd.Timestamp,
                     nid(), "segment", m, dim, seg,
                     rationale=f"{m} movement localised to {dim}={seg}"))
 
-    # 3. Seasonal regime rather than incident. No prior year exists, so this is
-    #    tested by persistence and shape, not year-over-year comparison.
-    for m in anomalous_metrics:
-        hyps.append(Hypothesis(
-            nid(), "seasonal", m,
-            rationale=f"{m} movement is a recurring calendar regime, "
-                      f"not an incident"))
-
-    # 4. Single-order artefact. AOV only - the others cannot be moved by one buyer.
-    if "aov" in anomalous_metrics:
-        hyps.append(Hypothesis(
-            nid(), "concentration", "aov",
-            rationale="AOV movement driven by one order, not broad demand"))
-
+    # No seasonal hypothesis: that module was cut (notes/baseline.md, "Scope
+    # decision"). No concentration hypothesis: single-order AOV days are
+    # reclassified at detection time (detection/anomaly.py), not tested here.
     return hyps
 
 

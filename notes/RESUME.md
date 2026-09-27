@@ -29,4 +29,6 @@ Warnings about all-NaN slices are expected (segments with too few lags).
 - Cannot distinguish seasonality from incidents
 - Device and country dimensions are near-vacuous (one segment IS the business)
 - Judgment-call numbers: materiality 0.05, high_contribution 0.30,
-  q 0.05/0.10, concentration note 0.40
+  q 0.05/0.10, concentration note 0.40, concentration check max/median
+  order ratio 20x (reasoned, not measured: sits between thin days ~1x and
+  the marginal whale 2016-11-26 at 45x)

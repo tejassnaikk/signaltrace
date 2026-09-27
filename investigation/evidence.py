@@ -42,7 +42,7 @@ class EvidenceEntry:
     p_value: float | None
     q_value: float | None
     verdict: str
-    basis: str                   # identity | statistical_test | threshold
+    basis: str                   # identity | statistical_test | threshold | decomposition_only
     detail: str = ""
     recorded_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat())

@@ -8,11 +8,18 @@ Ranking is by EFFECT. Significance qualifies the result; it does not order it.
 A segment explaining 40% of a decline outranks one explaining 1%, however
 significant the latter's local change is.
 
-Verdicts:
+Verdicts (seven), checked in this order:
+    immaterial               contribution < floor  (dropped before testing)
+    arithmetic               mix term: exact identity, no null hypothesis
+    material_untested        contribution >= floor, no valid test exists (AOV)
     strong                   contribution >= floor AND q < 0.05
     plausible                contribution >= floor AND q < 0.10
     material_but_uncertain   contribution >= high_contribution AND q >= 0.10
-    immaterial               contribution < floor  (dropped before testing)
+    unsupported              contribution >= floor, tested, not significant
+
+An eighth label, explained_single_order, is NOT produced here. It is written
+to the ledger by the orchestrator for AOV anomalies the detection-time
+concentration check reclassified (detection/anomaly.py).
 """
 from __future__ import annotations
 
