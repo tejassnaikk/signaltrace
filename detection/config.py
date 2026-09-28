@@ -11,11 +11,58 @@ The sweep lives in notes/baseline.md; do not change these without re-running it.
 #   conversion- bounded ratio, responds fast -> longer window adds lag without
 #               reducing noise. 8wk: 5 crossings, 12wk: 4. Essentially flat.
 #   aov       - heavy-tailed, needs the long window AND the concentration check.
-COMPONENTS = {
+_COMPONENTS_ABSOLUTE = {
     "sessions":        {"weeks": 12, "z": 4.0, "fp_floor": 4 / 280},
     "conversion_rate": {"weeks":  8, "z": 4.0, "fp_floor": 5 / 308},
     "aov":             {"weeks": 12, "z": 4.0, "fp_floor": 8 / 280},
 }
+
+# M2b (PLAN.md 3.11): log residual ln(actual)-ln(expected), fixing the
+# absolute-residual asymmetry (a decline is bounded at -100%, a rise is not).
+# Windows chosen from a real-data bias/crossing sweep, NOT reused from the
+# absolute scale above - sessions reconfirms 12wk; conversion_rate and aov
+# both genuinely change (4wk, 8wk) because log-space bias is measurably
+# smaller there at a shorter window. fp_floor values below are placeholders
+# pending the regression-then-real-pipeline re-measurement (PLAN.md 3.11);
+# do not treat as final until that re-measurement is recorded.
+_COMPONENTS_LOG = {
+    "sessions":        {"weeks": 12, "z": 4.0, "fp_floor": 5 / 281},
+    "conversion_rate": {"weeks":  4, "z": 4.0, "fp_floor": 4 / 281},
+    "aov":             {"weeks":  8, "z": 4.0, "fp_floor": 1 / 281},
+}
+
+# M2b, amended (PLAN.md 3.11): pure log-space fixes decline-blindness but
+# costs increase-sensitivity everywhere, and specifically misses 3 of the 4
+# known AOV whale days (measured: log z=3.15/2.80/2.25 vs the z>4 bar, all
+# real spikes the absolute scale caught at z=4.69-15.83). Derived from the
+# mechanism, not picked from whichever table looked best: an absolute
+# decline is bounded at -100%, so log is the only valid scale for the lower
+# tail; log COMPRESSES the upper tail (that is what a log transform does to
+# proportional increases), so absolute is kept for the upper tail. Same
+# per-component windows as the pure-log/pure-absolute sweeps above - the
+# hybrid reuses each scale's own already-frozen window for its own tail,
+# not a newly tuned pair.
+# fp_floor measured through the real detect_components/annotate_concentration
+# path (not a standalone sweep), 281-day detection range, non-suppressed
+# firings only - AOV's 4 firings are exactly the 4 known whale days, all
+# reclassified explained_single_order, so its non-whale floor is 0/281.
+_COMPONENTS_HYBRID = {
+    "sessions":        {"weeks_log": 12, "weeks_abs": 12, "z": 4.0, "fp_floor": 5 / 280},
+    "conversion_rate": {"weeks_log":  4, "weeks_abs":  8, "z": 4.0, "fp_floor": 6 / 281},
+    "aov":             {"weeks_log":  8, "weeks_abs": 12, "z": 4.0, "fp_floor": 4 / 281},
+}
+
+COMPONENTS_BY_SCALE = {"absolute": _COMPONENTS_ABSOLUTE, "log": _COMPONENTS_LOG,
+                       "hybrid": _COMPONENTS_HYBRID}
+
+# Single switch for both expectation.py's build_expectation and this file's
+# COMPONENTS - toggle to produce the M2b "before"/"after" from one harness,
+# no duplicated detection module (PLAN.md 3.11, "config-flag design").
+# Stays "absolute" as the default/regression baseline; M2b work selects
+# "hybrid" explicitly rather than changing this default.
+RESIDUAL_SCALE = "absolute"
+
+COMPONENTS = COMPONENTS_BY_SCALE[RESIDUAL_SCALE]
 
 # Revenue has NO independent threshold. At ~33 txns/day its residual spread is
 # irreducible (p05/p95 of -72%/+161%), so a revenue-level detector either

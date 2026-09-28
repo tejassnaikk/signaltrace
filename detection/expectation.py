@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from detection.config import EXCLUDE_DATES
+from detection.config import EXCLUDE_DATES, RESIDUAL_SCALE
 
 WEEKS = 4                      # trailing same-weekday window
 
@@ -53,12 +53,42 @@ def robust_z(resid: pd.Series) -> tuple[pd.Series, float, float]:
 
 
 def build_expectation(df: pd.DataFrame, metric: str,
-                      weeks: int = WEEKS) -> pd.DataFrame:
+                      weeks: int = WEEKS,
+                      residual_scale: str | None = None,
+                      weeks_abs: int | None = None) -> pd.DataFrame:
     """Per-metric expectation frame: actual, expected, residual, pct_dev, z.
 
     Excluded dates are masked BEFORE the baseline is computed so a known bad
     day cannot contaminate the expectation of the four weeks that follow it.
+
+    `residual_scale` ("absolute" | "log" | "hybrid", default detection.
+    config.RESIDUAL_SCALE) picks which residual feeds `robust_z` -
+    PLAN.md 3.11 (M2b).
+
+    "absolute": residual = actual - expected, unchanged from the original
+    design.
+
+    "log": residual = ln(actual) - ln(expected), computed by taking the
+    same trailing same-weekday median in log space rather than logging an
+    absolute-space median. Fixes the asymmetry where a decline is bounded at
+    -100% but a rise is not - but measured to cost sensitivity to increases
+    symmetrically, including 3 of 4 known AOV whale days (PLAN.md 3.11).
+
+    "hybrid" (adopted): declines use the log residual (`weeks` = the log
+    window), increases use the absolute residual (`weeks_abs` = the
+    absolute window, defaults to `weeks` if not given). Each tail gets its
+    OWN robust_z computed from its OWN history - the two residuals are never
+    pooled into one MAD (their units differ), only the resulting z-scores
+    are combined, one per day, by whichever tail that day's log-residual
+    sign says it belongs to. Derived from the mechanism (an absolute
+    decline is bounded at -100%, log compresses the upper tail), not from
+    picking whichever table looked best.
+
+    `expected`/`pct_dev` are always reported in the metric's own units
+    (exponentiated back for the log tail), so callers see no schema change
+    regardless of scale.
     """
+    residual_scale = residual_scale or RESIDUAL_SCALE
     s = df.set_index("date")[metric].astype(float).sort_index()
     s.index = pd.DatetimeIndex(s.index)
 
@@ -66,25 +96,74 @@ def build_expectation(df: pd.DataFrame, metric: str,
     clean = s.copy()
     clean.loc[excl] = np.nan
 
-    expected = seasonal_naive_baseline(clean, weeks)
-    resid = s - expected
-    z, center, scale = robust_z(resid)
+    if residual_scale == "absolute":
+        expected = seasonal_naive_baseline(clean, weeks)
+        resid = s - expected
+        z, center, scale = robust_z(resid)
+        pct_dev = np.where(
+            (expected.values != 0) & ~pd.isna(expected.values),
+            resid.values / np.where(expected.values == 0, np.nan, expected.values),
+            np.nan)
+
+    elif residual_scale == "log":
+        # median-of-lags taken IN LOG SPACE, not logged after the fact - the
+        # two differ (median commutes with a monotonic transform, but the
+        # trailing window's NaN-masking of excluded/missing days does not
+        # commute the same way once zeros/negatives are involved), and only
+        # the log-space median matches what was actually swept and frozen
+        # (PLAN.md 3.11).
+        log_clean = np.log(clean.where(clean > 0))
+        log_s = np.log(s.where(s > 0))
+        expected_log = seasonal_naive_baseline(log_clean, weeks)
+        expected = np.exp(expected_log)
+        resid = log_s - expected_log
+        z, center, scale = robust_z(resid)
+        pct_dev = np.exp(resid.values) - 1.0   # ln(actual/expected) -> actual/expected - 1
+
+    elif residual_scale == "hybrid":
+        weeks_abs = weeks_abs or weeks
+        log_clean = np.log(clean.where(clean > 0))
+        log_s = np.log(s.where(s > 0))
+        expected_log = seasonal_naive_baseline(log_clean, weeks)
+        resid_log = log_s - expected_log
+        z_log, center_log, scale_log = robust_z(resid_log)
+
+        expected_abs = seasonal_naive_baseline(clean, weeks_abs)
+        resid_abs = s - expected_abs
+        z_abs, center_abs, scale_abs = robust_z(resid_abs)
+
+        # Direction decided by the log tail's own sign (always well-defined:
+        # ln(actual) vs ln(expected_log) agrees with actual vs expected_log
+        # exactly, since ln is monotonic). A decline uses the log z/expected/
+        # residual for that day; an increase uses the absolute z/expected/
+        # residual - never a value blended from both.
+        is_decline = resid_log < 0
+        z = z_log.where(is_decline, z_abs)
+        expected = np.exp(expected_log).where(is_decline, expected_abs)
+        resid = resid_log.where(is_decline, resid_abs)  # mixed units - sign/display only, not re-scored
+        pct_dev = np.where(is_decline.to_numpy(),
+                           np.exp(resid_log.to_numpy()) - 1.0,
+                           np.where((expected_abs.to_numpy() != 0) & ~pd.isna(expected_abs.to_numpy()),
+                                    resid_abs.to_numpy() / np.where(expected_abs.to_numpy() == 0, np.nan,
+                                                                    expected_abs.to_numpy()),
+                                    np.nan))
+        center, scale = (center_log, center_abs), (scale_log, scale_abs)  # no single pooled pair in hybrid mode
+    else:
+        raise ValueError(f"unknown residual_scale {residual_scale!r}")
 
     out = pd.DataFrame({
         "date": s.index,
         "metric": metric,
         "actual": s.values,
-        "expected": expected.values,
-        "residual": resid.values,
-        "pct_dev": np.where(
-            (expected.values != 0) & ~pd.isna(expected.values),
-            resid.values / np.where(expected.values == 0, np.nan, expected.values),
-            np.nan),
-        "robust_z": z.values,
+        "expected": expected.values if hasattr(expected, "values") else expected,
+        "residual": resid.values if hasattr(resid, "values") else resid,
+        "pct_dev": pct_dev,
+        "robust_z": z.values if hasattr(z, "values") else z,
     })
     out["excluded"] = out["date"].isin(excl)
     out.attrs["center"] = center
     out.attrs["scale"] = scale
+    out.attrs["residual_scale"] = residual_scale
     return out
 
 
