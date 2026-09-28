@@ -58,8 +58,41 @@ choosing n=84 is the mechanism-level argument above (an own estimate that
 exists, even noisy, is more informative than a pooled one built almost
 entirely from different, far more volatile segments), not the C1 count.
 
+**Dimension-pooled fallback found broken 2026-09-28 and fixed the same
+way - lower the hard cutoff further, not blend or re-group the pool.**
+Almost all "dimension"-tier usage (18 of 19 hits across the full benchmark)
+traced to a single date, C1's 2017-01-13, where every channel/country
+segment has the SAME n_own (75, after correctly accounting for the hybrid
+detector's expanded exclusion list) because the trailing window length is a
+calendar property (days since the window's start), not a segment-specific
+one - the same underlying mechanism as the earlier 120-cutoff defect, just
+recurring on a different date. Tried volume-matched tercile pooling first
+(group by baseline session volume within the dimension, pool only same-
+tercile segments) and measured it against each segment's own (short-history)
+estimate as ground truth: it does NOT reliably help. Volume does not predict
+dispersion here - Organic Search (high volume, own phi~36-47) got pooled
+with Social (high volume, own phi~1100) into the same tercile, giving
+tercile phi=409, an 8.7x overestimate that is WORSE than whole-dimension
+pooling's 4x. Country showed the same pattern (US/India pooled with Vietnam).
+Eligibility status doesn't separate them either - Affiliates/Display are
+traffic-only like Social but have LOW dispersion. No available static
+segment property cleanly stratifies dispersion in this dataset, so grouping
+by any of them is unreliable.
+
+What actually fixed it: bootstrap CV at n=75 (19.6% median, 42.2% p90) is
+nearly identical to n=84 (18.3%, 37.4%) - lowering OWN_MIN_N to 75 is a
+small, measured reliability cost, not a new failure mode, and it lets these
+segments use their own (far more accurate) estimate instead of a pool
+that's off by 3x-70x depending on the segment. Same mechanism as the
+120->84 fix, not shrinkage in a new form - a hard-cutoff change, no
+blending, no pooled prior. Verified: C1 material-tested false-strong rate
+IMPROVED (5/78, 6.4% -> 3/78, 3.8%; sessions 4/54, 7.4% -> 2/54, 3.7%), full
+M3 benchmark unchanged at 34/36 (identical per-incident counts), and the
+specific 2017-01-13 segments now show correct own-phi (Social~1100, Organic
+Search~36, Affiliates~3.6, Germany~3.7) with no spurious strong verdicts.
+
 Three-tier fallback:
-    own segment    n >= OWN_MIN_N (84)  - bootstrap median CV 18.2%, p90 38.3%
+    own segment    n >= OWN_MIN_N (75)  - bootstrap median CV 19.6%, p90 42.2%
     dimension pool n >= DIM_MIN_N (300) - bootstrap median CV 18.2%, p75 21.9%
     global pool    whatever's available - always sufficient in practice by
                    the time any of this project's benchmark dates occur
@@ -79,7 +112,7 @@ from detection.config import COMPONENTS
 from metrics.dependency_graph import DIMENSIONS
 from metrics.segments import segment_expectation, segment_series
 
-OWN_MIN_N = 84      # matches COMPONENTS["sessions"]["weeks"] * 7 - see module docstring
+OWN_MIN_N = 75      # lowered from 84, 2026-09-28 - see module docstring, "Dimension-pooled fallback found broken"
 DIM_MIN_N = 300
 SESSIONS_WEEKS = COMPONENTS["sessions"]["weeks"]
 

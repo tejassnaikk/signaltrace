@@ -1227,7 +1227,10 @@ evidence of anything code- or calendar-related.
 **Full re-verification after the fix, evaluation/score.py:**
 - C1, full (not just sessions): overall 5/78 material-tested pairs strong
   (6.4%) - sessions 4/54 (7.4%), conversion_rate 1/24 (4.2%, **unchanged**,
-  confirming `_prop_p` was untouched as intended).
+  confirming `_prop_p` was untouched as intended). **[2026-09-28] Further
+  improved to 3/78 (3.8%), sessions 2/54 (3.7%)** by a second dispersion fix
+  (OWN_MIN_N lowered 84->75, investigation/dispersion.py) - see the module
+  docstring for the measurement; kept here as the pre-second-fix number.
 - I1: 5/5 (unchanged from before the fix - all "own" tier, q ranging
   6.6e-6 to 3.0e-3).
 - I2: 5/5 (unaffected - conversion_rate uses `_prop_p`, not `_poisson_p`).
