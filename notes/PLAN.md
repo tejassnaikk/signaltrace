@@ -230,9 +230,13 @@ the concentration check absorbs whale days), revenue (composed) 4.6%.
 **[2026-09-27] These are the absolute-scale floors, kept as the pre-M2b
 "before" - see Section 3.11 for the hybrid design's re-measured floors**
 (sessions 1.79%, conversion_rate 2.14%, aov 1.42%, composed 5.34%), a real
-cost traded for decline-sensitivity, not a free upgrade. `RESIDUAL_SCALE`
-stays "absolute" by default; these are still the floors that apply unless
-a caller explicitly selects "hybrid".
+cost traded for decline-sensitivity, not a free upgrade. **[2026-09-28]
+`RESIDUAL_SCALE` now defaults to "hybrid"** (was "absolute" during M2b's
+build-out; that was never a deliberate permanent choice, just the safe
+holding value while hybrid was being validated on a branch - see Section
+3.11's end for the flip and the bug it surfaced). The hybrid floors above
+are therefore now the ones that apply by default; the original absolute
+floors on this line remain available via an explicit override.
 
 Revenue has **no independent threshold** — its verdict is composed from
 which components fired. This is a structural departure from the original
@@ -547,6 +551,28 @@ by the new lower-tail sensitivity - 12-24/12-31 fall inside the already-
 known Christmas cluster (consistent with real seasonality, Section 3.6);
 2017-07-01 is genuinely new, not in the old exclusion buffer, not one of
 the 41 dates.
+
+**Per-day margin from the z>4 bar, checked individually rather than folded
+into "net +2" - 3 of the 4 are genuine boundary cases, one is not (2026-
+09-28):**
+
+| date | metric | hybrid z | margin from 4.0 | boundary case? |
+|---|---|---|---|---|
+| 2016-12-29 (dropped) | sessions | -3.893 | -0.107 (2.7% short) | **yes** |
+| 2016-12-24 (added) | sessions | -4.158 | +0.158 (4.0% over) | **yes** |
+| 2016-12-31 (added) | sessions | -4.236 | +0.236 (5.9% over) | **yes, marginally less so** |
+| 2017-07-01 (added) | conversion_rate | -4.703 | +0.703 (17.6% over) | **no - comfortable** |
+
+Three of the four sit within ~6% of the threshold on either side - the same
+underlying Christmas-cluster signal crossing or not crossing depending on
+which residual scale measures it, not three independent findings. 2017-07-01
+is the outlier in both directions: it's the only one of the four that's a
+clean, unambiguous crossing, and it's also the only one that's a genuinely
+new calendar date rather than a threshold flicker inside an already-known
+event window. This mirrors I5's 87.96%-vs-90% finding directly: a headline
+count ("15, not 13") can hide that most of the underlying change is
+boundary noise around one recurring cluster, with a single real new finding
+sitting inside it.
 
 **Concentration check: not applicable to any of the 4 changed days.** All
 three additions fire on sessions (12-24, 12-31) or conversion_rate (07-01);
