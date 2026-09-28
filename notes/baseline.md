@@ -409,14 +409,33 @@ residual is in absolute units with one pooled MAD, and residual spread is
 impossible for a positive quantity. Consistent with the real data: none of the
 13 flagged days is a conversion or AOV decline.
 
+**[2026-09-27] This table is the documented "before" - see PLAN.md Section
+3.11 (M2b) for the "after."** Log-space residuals fix exactly this
+asymmetry for declines (conversion_rate/AOV at -90%: 5%/2% -> 93%/94%
+measured under the shipped hybrid design), at a real, measured cost to
+increase-sensitivity in the same table (conversion_rate/AOV at +200%:
+74%/67% -> 14%/12%) and to the false-positive floor (sessions 1.4%->1.79%,
+conversion_rate 1.8%->2.14%, composed 4.6%->5.34%). This table's numbers
+are kept as-is, unedited, as the pre-M2b reference point.
+
 Consequences:
 - The -12% AOV incident that justified AOV as an independent detector (see
-  "DECISION" above) would fire on 0-1% of days.
+  "DECISION" above) would fire on 0-1% of days. **Still true post-M2b for
+  I4 specifically** (PLAN.md 3.11): I4's mechanism is a uniform -25% AOV cut
+  with no dilution, and even that undiluted magnitude only reaches ~1% under
+  the hybrid design's decline (log) test - a -25% cut simply isn't a large
+  enough relative move to clear this floor at the top level, log-space or
+  not. I4 is not expected to fire on AOV under either scale; this remains a
+  segment/forced-investigation-only finding, not a detection one.
 - M2's separability gate ("injected incidents land outside the FP floor") was
   never tested; this table is the first measurement of it.
 - A device mix-shift incident cannot fire at any magnitude: all-desktop raises
   blended conversion only ~24%; all-mobile lowers it ~66%, an undetectable
-  decline.
+  decline. **Partially addressed by M2b**: a -66% decline lands between the
+  hybrid table's -50% (2%) and -70% (15%) conversion_rate rows - still
+  low-probability, no longer strictly "undetectable," but I6's actual
+  injected mix-shift magnitude (~-21% blended, per PLAN.md 3.11's dilution
+  arithmetic) is far short of -66% and stays undetected either way.
 
 Decision: detection and diagnosis are scored separately in the M3 benchmark
 (diagnosis via forced investigation of the injected metric). Log-space

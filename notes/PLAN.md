@@ -227,6 +227,13 @@ Measured floors (on untouched 2016-10-24 to 2017-07-31, 281 days after
 the 12-week warm-up): sessions 1.4%, conversion_rate 1.8%, aov 1.4% (after
 the concentration check absorbs whale days), revenue (composed) 4.6%.
 
+**[2026-09-27] These are the absolute-scale floors, kept as the pre-M2b
+"before" - see Section 3.11 for the hybrid design's re-measured floors**
+(sessions 1.79%, conversion_rate 2.14%, aov 1.42%, composed 5.34%), a real
+cost traded for decline-sensitivity, not a free upgrade. `RESIDUAL_SCALE`
+stays "absolute" by default; these are still the floors that apply unless
+a caller explicitly selects "hybrid".
+
 Revenue has **no independent threshold** — its verdict is composed from
 which components fired. This is a structural departure from the original
 plan's single revenue-level detector, made necessary by 3.2's finding.
@@ -540,6 +547,39 @@ by the new lower-tail sensitivity - 12-24/12-31 fall inside the already-
 known Christmas cluster (consistent with real seasonality, Section 3.6);
 2017-07-01 is genuinely new, not in the old exclusion buffer, not one of
 the 41 dates.
+
+**Concentration check: not applicable to any of the 4 changed days.** All
+three additions fire on sessions (12-24, 12-31) or conversion_rate (07-01);
+the one drop (12-29) also fired on sessions. Concentration only classifies
+AOV firings - none of these four are AOV, so there is nothing for it to
+check here. **Floor increase, stated as a cost, not just a number**:
+sessions 1.4%->1.79% (+28% relative), conversion_rate 1.8%->2.14% (+19%),
+aov 1.4%->1.42% (+1%, effectively free since its floor is dominated by
+whale reclassification either way), composed 4.6%->5.34% (+16%). Every
+component except AOV pays a real increase in false-positive rate for the
+decline-sensitivity gain.
+
+**Reference-date ledgers, re-checked under hybrid: unchanged on all
+three.** 2016-12-26 (sessions), 2017-03-04 (conversion_rate), 2017-04-27
+(aov) - same metric fires under hybrid as under absolute for every one of
+them. Unsurprising for 2017-03-04 specifically (a real INCREASE, +564.4%
+conversion_rate, which routes to the unchanged absolute test under hybrid
+by construction); the other two happen to clear both scales' thresholds
+regardless of which one is active.
+
+**2017-07-01, classified via forced investigation (`force=
+["conversion_rate"]`):** a genuine, holiday-weekend-adjacent broad-based
+conversion collapse, not a concentration/whale artifact. Revenue $85 vs
+expected $1,139 (-92.6%); conversion_rate -86.3% and AOV -60.1% collapse
+together while sessions is actually +35.8% (people browsing, not buying).
+Segment story: United States (99.6% within-share, strong, q=0.0002) and
+desktop (71.9%, strong, q=0.012) dominate, matching the site's usual
+structural imbalance rather than pointing at a channel-specific cause;
+channel dimension is diffuse (mix 36.5%, Referral 36.2% but not
+significant), consistent with a broad, cross-channel behavior shift, not a
+campaign problem. This date is not one of the 41 and is not being added to
+any incident's date list - reported as a real, explainable finding, not
+acted on.
 
 **4. Sensitivity table and the injector, each run once, from the real
 harness - verified to reproduce the log/absolute tables exactly, then never
