@@ -46,10 +46,28 @@ _COMPONENTS_LOG = {
 # path (not a standalone sweep), 281-day detection range, non-suppressed
 # firings only - AOV's 4 firings are exactly the 4 known whale days, all
 # reclassified explained_single_order, so its non-whale floor is 0/281.
+#
+# "weeks" IS ALSO SET HERE, aliased to weeks_abs, deliberately - NOT for
+# detection (detect_components branches on "weeks_log"/"weeks_abs" and
+# ignores this key entirely). This exists because investigation/orchestrator.
+# py and investigation/dispersion.py read COMPONENTS[m]["weeks"] directly for
+# their OWN, unrelated purpose (segment-level expectation windows, module-
+# level at dispersion.py's import time) - a genuinely different use of the
+# same COMPONENTS dict than detection's. Without this alias, changing
+# RESIDUAL_SCALE to "hybrid" crashes investigation/dispersion.py at IMPORT
+# time (KeyError: 'weeks') - found by testing, not assumed. Aliasing to
+# weeks_abs keeps investigation/'s window choice IDENTICAL to the absolute
+# scale regardless of which RESIDUAL_SCALE is active, so switching detection
+# to hybrid cannot silently change segment-level investigation behavior -
+# exactly the "no changes to investigation/, segment expectations" scope
+# boundary PLAN.md 3.11 was built under.
 _COMPONENTS_HYBRID = {
-    "sessions":        {"weeks_log": 12, "weeks_abs": 12, "z": 4.0, "fp_floor": 5 / 280},
-    "conversion_rate": {"weeks_log":  4, "weeks_abs":  8, "z": 4.0, "fp_floor": 6 / 281},
-    "aov":             {"weeks_log":  8, "weeks_abs": 12, "z": 4.0, "fp_floor": 4 / 281},
+    "sessions":        {"weeks_log": 12, "weeks_abs": 12, "weeks": 12,
+                        "z": 4.0, "fp_floor": 5 / 280},
+    "conversion_rate": {"weeks_log":  4, "weeks_abs":  8, "weeks": 8,
+                        "z": 4.0, "fp_floor": 6 / 281},
+    "aov":             {"weeks_log":  8, "weeks_abs": 12, "weeks": 12,
+                        "z": 4.0, "fp_floor": 4 / 281},
 }
 
 COMPONENTS_BY_SCALE = {"absolute": _COMPONENTS_ABSOLUTE, "log": _COMPONENTS_LOG,
@@ -58,9 +76,18 @@ COMPONENTS_BY_SCALE = {"absolute": _COMPONENTS_ABSOLUTE, "log": _COMPONENTS_LOG,
 # Single switch for both expectation.py's build_expectation and this file's
 # COMPONENTS - toggle to produce the M2b "before"/"after" from one harness,
 # no duplicated detection module (PLAN.md 3.11, "config-flag design").
-# Stays "absolute" as the default/regression baseline; M2b work selects
-# "hybrid" explicitly rather than changing this default.
-RESIDUAL_SCALE = "absolute"
+#
+# "hybrid" (2026-09-28): the earlier "absolute" default during M2b's build-
+# out was never a deliberate design choice - it was the safe holding value
+# while the hybrid design was being built and validated on a branch, with no
+# stated reason to prefer it permanently. Once fully measured, hybrid
+# strictly dominates for this system's purpose: identical reference-date
+# ledgers, all 4 whale days still caught and reclassified, decline-detection
+# fixed (conversion_rate/AOV at -90%: 5%/2% -> 93%/94%), at a modest,
+# already-quantified false-positive cost (composed floor 4.6% -> 5.34%).
+# See PLAN.md 3.11 for the full measurement record this default change
+# rests on.
+RESIDUAL_SCALE = "hybrid"
 
 COMPONENTS = COMPONENTS_BY_SCALE[RESIDUAL_SCALE]
 
