@@ -466,6 +466,142 @@ crossings percentage already in the table (sessions 1.8%, conversion_rate
 `detect_components` code path, not just this standalone sweep, before being
 called the frozen floor.
 
+**AMENDMENT 2026-09-27 - the text above stays as the frozen proposal record;
+this section documents what actually shipped and why, without editing it.**
+
+**Pure log-space was implemented, measured, and found to be a real trade-off,
+not a pure win - the amendment exists because of what that measurement
+showed.** The synthetic sensitivity table (run once through the real
+`build_expectation`/`detect_components` path, not a standalone script):
+
+| component | scale | -30% | -50% | -70% | -90% | +30% | +50% | +100% | +200% |
+|---|---|---|---|---|---|---|---|---|---|
+| sessions | absolute | 7% | 15% | 22% | 64% | 11% | 16% | 58% | 94% |
+| sessions | log | 8% | 26% | 94% | 100% | 0% | 4% | 23% | 84% |
+| conversion_rate | absolute | 0% | 0% | 0% | 5% | 9% | 15% | 35% | 74% |
+| conversion_rate | log | 1% | 2% | 15% | 93% | 1% | 2% | 4% | 14% |
+| aov | absolute | 1% | 0% | 0% | 2% | 7% | 11% | 29% | 67% |
+| aov | log | 0% | 2% | 21% | 94% | 0% | 1% | 4% | 12% |
+
+Decline sensitivity transforms exactly as intended (conversion_rate/AOV at
+-90%: 5%/2% -> 93%/94%), but increase sensitivity drops by a similar
+magnitude in the other direction (conversion_rate/AOV at +200%: 74%/67% ->
+14%/12%). **This is the same mechanism in both directions**, not two
+unrelated findings: a log transform compresses the upper tail exactly as it
+expands the lower one. Concretely, for AOV specifically, this cost 3 of the
+4 known whale days their `is_anomaly` flag entirely under pure log-space
+(2016-11-26 z=3.15, 2017-02-14 z=2.80, 2017-03-24 z=2.25, all below the z>4
+bar; only 2017-04-05 at z=4.35 still cleared it) - they never even reach the
+concentration-check stage if they never cross the threshold first.
+
+**Shipped instead: directional hybrid, derived from the mechanism, not from
+which table looked best.** Declines use the log residual (bounded-at--100%
+problem only exists on the downside); increases use the absolute residual
+(log-compression only hurts the upside). Implementation: each tail gets its
+OWN `robust_z`, computed from its OWN history in its OWN scale - the two
+residuals are never pooled into one MAD (their units differ), only the
+resulting z-scores are combined per day, by whichever tail that day's log
+residual's sign says it belongs to (`detection/expectation.py`,
+`residual_scale="hybrid"`; `detection/anomaly.py`'s loop passes
+`weeks_log`/`weeks_abs` instead of a single `weeks` when a hybrid config is
+active - the only change to anomaly.py, and it's inside detection/, so the
+"detection only" scope holds).
+
+**1. Regression, confirmed exactly, with the hybrid code present but
+`RESIDUAL_SCALE="absolute"` (the unchanged default):** 13 composed real-
+incident days, 4 whale days, identical dates to the original baseline,
+single-component firings on the three reference dates (sessions/
+conversion_rate/aov) - byte-for-byte the same as before any of this
+existed. M3 benchmark unaffected: 34/36, C1 5/78 (6.4%).
+
+**2. Floors, re-measured through the real `detect_components` path for the
+HYBRID config specifically** (not the earlier placeholder values, and not
+the pure-log values from the frozen proposal above) - written into
+`detection/config.py`:
+
+| component | old absolute floor | hybrid floor | composed |
+|---|---|---|---|
+| sessions | 1.4% (4/280) | **1.79% (5/280)** | - |
+| conversion_rate | 1.8% (5/308) | **2.14% (6/281)** | - |
+| aov | 1.4% (8/280) | **1.42% (4/281)** | - |
+| revenue (composed) | 4.6% | **15/281 real-incident-days union = 5.3%** (see below) | - |
+
+**3. All 4 whale days confirmed firing and reclassified
+`explained_single_order` under hybrid** - z-values identical to the
+absolute scale (4.69, 8.43, 6.24, 15.83), because all 4 are increases and
+increases route to the absolute-scale test. No whale-detection loss under
+the shipped design.
+
+**Composed real-incident days: 15, not 13 - a real, reported shift, not an
+error.** Net +2: 2016-12-29 (fired under absolute, does not fire under
+hybrid) is dropped; 2016-12-24, 2016-12-31, and 2017-07-01 (none of which
+fired under absolute) are added. All three additions are declines picked up
+by the new lower-tail sensitivity - 12-24/12-31 fall inside the already-
+known Christmas cluster (consistent with real seasonality, Section 3.6);
+2017-07-01 is genuinely new, not in the old exclusion buffer, not one of
+the 41 dates.
+
+**4. Sensitivity table and the injector, each run once, from the real
+harness - verified to reproduce the log/absolute tables exactly, then never
+re-run:**
+
+| component | -30% | -50% | -70% | -90% | +30% | +50% | +100% | +200% |
+|---|---|---|---|---|---|---|---|---|---|
+| sessions | 8% | 26% | 94% | 100% | 11% | 16% | 58% | 94% |
+| conversion_rate | 1% | 2% | 15% | 93% | 9% | 15% | 35% | 74% |
+| aov | 1% | 3% | 21% | 94% | 7% | 11% | 29% | 67% |
+
+Declines match the log column exactly; increases match the absolute column
+exactly, for all three components - confirms the hybrid routes correctly,
+not just approximately.
+
+**41-date injector run, once, hybrid mode - exactly 1 of 41 flips to
+True:** I7's conversion_rate check on **2017-07-04**. Every other check
+(40/41) stays False, matching the dilution-based predictions in the frozen
+proposal above. The one flip is explained, not a surprise requiring further
+investigation: 2017-07-04's real background conversion_rate sits close to
+the log threshold on its own (z=-3.65, confirmed via the real pipeline -
+retracting an earlier, buggy standalone-script claim of z=-4.00, which did
+NOT reproduce here); I7's injected Referral decline stacks in the same
+direction and pushes it across. **This is also the same date the holiday
+screen below flags as sitting exactly on a US federal holiday** - both
+findings point at the same day for related but distinct reasons (a real
+calendar effect on the background, and a screening gap in the original
+exclusion filter). No date change made.
+
+**5. Holiday screening gap, logged, not corrected:** the original exclusion
+filter (Section 5.1) covers Thanksgiving/Black Friday/Cyber Monday/pre-
+Christmas week only - it was never checked against the rest of the US
+federal holiday calendar. 8 of the 41 pre-registered dates fall within 3
+days of a holiday it doesn't cover:
+
+| incident | date | nearest holiday | gap (days) |
+|---|---|---|---|
+| I3 | 2016-11-11 | Veterans Day | 0 (exact) |
+| I7 | 2017-07-04 | Independence Day | 0 (exact) |
+| C1 | 2016-11-10 | Veterans Day | 1 |
+| I1 | 2017-07-05 | Independence Day | 1 |
+| I2 | 2017-01-17 | MLK Day | 1 |
+| I2 | 2016-11-14 | Veterans Day | 3 |
+| I3 | 2016-11-21 | Thanksgiving | 3 |
+| C1 | 2017-01-13 | MLK Day | 3 |
+
+I7 with 2017-07-04: 5/5 (M3 benchmark). I7 without it: 4/4 - the holiday
+date isn't propping up an otherwise-failing result, but two dates (I3's
+2016-11-11, I7's 2017-07-04) sit exactly on a federal holiday, which is a
+genuine gap in the original screening regardless. **No date swaps made in
+M2b, per instruction** - this is logged as a known, unaddressed screening
+gap for a future round to decide on, the same way I3/I3b/I4's channel-
+dominance fragility was logged before being fixed in a later round.
+
+**Scope, confirmed:** `investigation/`, `metrics/segments.py`'s
+`segment_expectation`, and the revenue-composition rule (`REVENUE_COMPOSED`,
+`compose_revenue_verdict`) are all untouched. The only files changed are
+`detection/config.py`, `detection/expectation.py`, and one small,
+detection-internal branch in `detection/anomaly.py`'s `detect_components`
+loop (reading `weeks_log`/`weeks_abs` instead of `weeks` when a hybrid
+config is active).
+
 ---
 
 ## 4. Phase 2 — Agent layer (unchanged from original plan)

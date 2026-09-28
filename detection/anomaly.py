@@ -17,7 +17,14 @@ def detect_components(df: pd.DataFrame) -> pd.DataFrame:
     """Run each component's own expectation model and threshold."""
     frames = []
     for metric, cfg in COMPONENTS.items():
-        e = build_expectation(df, metric, weeks=cfg["weeks"])
+        # Hybrid config (PLAN.md 3.11) carries two windows, one per tail,
+        # instead of a single "weeks" - everything else about this loop is
+        # unchanged either way.
+        if "weeks_log" in cfg:
+            e = build_expectation(df, metric, weeks=cfg["weeks_log"],
+                                  weeks_abs=cfg["weeks_abs"], residual_scale="hybrid")
+        else:
+            e = build_expectation(df, metric, weeks=cfg["weeks"])
         e = e[~e["excluded"]].dropna(subset=["robust_z"]).copy()
         e["threshold"] = cfg["z"]
         e["is_anomaly"] = e["robust_z"].abs() > cfg["z"]
