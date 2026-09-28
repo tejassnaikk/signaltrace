@@ -23,35 +23,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from detection.anomaly import annotate_concentration, detect_components
 from detection.config import COMPONENTS, EXCLUDE_DATES
 from investigation.attribution import multiplicative_contributions
+from investigation.dispersion import measure_phi_map
 from investigation.evidence import Ledger
 from investigation.hypotheses import eligible_segments
 from investigation.validator import to_frame, validate_segments
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
-from metrics.segments import segment_series
+from metrics.segments import segment_expectation, segment_series
 
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                   "data", "signaltrace.duckdb")
-
-
-def _seg_expectation(seg: pd.DataFrame, col: str, weeks: int) -> pd.DataFrame:
-    """Trailing same-weekday median per segment. Same method as the top level,
-    applied within each segment. Strictly backward-looking."""
-    piv = seg.pivot(index="date", columns="segment", values=col).sort_index()
-    # Mask known bad days BEFORE taking lags, as build_expectation does at the
-    # top level, so the 2016-08-03 data gap cannot enter any segment baseline.
-    clean = piv.copy()
-    clean.loc[clean.index.isin(pd.to_datetime(sorted(EXCLUDE_DATES)))] = np.nan
-    # Median across the `weeks` same-weekday lags, computed per column.
-    # (pandas 2.x removed groupby(axis=1), so stack the lags and take the
-    # element-wise median directly.)
-    lags = np.stack([clean.shift(7 * k).to_numpy(dtype=float)
-                     for k in range(1, weeks + 1)])
-    exp = pd.DataFrame(np.nanmedian(lags, axis=0),
-                       index=piv.index, columns=piv.columns)
-    # A column with fewer than `weeks` observed lags must stay NaN rather than
-    # silently median over whatever happens to exist.
-    exp = exp.mask(np.isnan(lags).any(axis=0))
-    return piv, exp
 
 
 def _fmt_share(contribution: float) -> str:
@@ -138,6 +118,13 @@ def investigate(date, con=None, verbose: bool = True,
                       f"{r.max_over_median:.0f}x the day's median order")
         led.record(_R())
 
+    # Days sessions itself had a genuine anomaly - excluded from dispersion
+    # history (investigation/dispersion.py) so a real incident's own variance
+    # doesn't inflate the "normal noise" phi estimate. Computed once, reused
+    # for every dimension below.
+    sessions_incident_dates = set(
+        anoms[(anoms["metric"] == "sessions") & anoms["is_anomaly"]]["date"])
+
     # 2-4. segment investigation for each fired metric, plus any metric the
     # caller forced regardless of detection (see the `force` docstring above)
     metrics_to_run = sorted(set(fired["metric"]) | set(force or []))
@@ -152,7 +139,7 @@ def investigate(date, con=None, verbose: bool = True,
             act_row, exp_row = {}, {}
             ok = True
             for c in cols:
-                piv, exp = _seg_expectation(seg, c, weeks)
+                piv, exp = segment_expectation(seg, c, weeks)
                 if date not in piv.index or exp.loc[date].isna().all():
                     ok = False
                     break
@@ -172,8 +159,16 @@ def investigate(date, con=None, verbose: bool = True,
             # asof=date: eligibility is judged on the trailing window BEFORE
             # this date, never on the segment's future volume.
             elig = set(eligible_segments(dim, m, con, asof=date))
+            # Dispersion correction for _poisson_p (sessions/transactions
+            # only - ratio metrics use _prop_p, not implicated, PLAN.md 5.3).
+            # asof=date, trailing-window only: same leak-free discipline as
+            # `elig` above, not a fixed historical window.
+            phi_lookup = (measure_phi_map(dim, act.index, asof=date, con=con,
+                                          excluded=sessions_incident_dates)
+                         if m in ("sessions", "transactions") else None)
             res = validate_segments(m, dim, act, exp,
-                                    hid_base=f"{m[:4]}-{dim[:3]}", eligible=elig)
+                                    hid_base=f"{m[:4]}-{dim[:3]}", eligible=elig,
+                                    phi_lookup=phi_lookup)
             led.record_many(res, metric=m)
             all_results.extend(res)
 

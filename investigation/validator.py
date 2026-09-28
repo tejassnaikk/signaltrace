@@ -57,6 +57,12 @@ class Result:
                             # gate - a DIFFERENT reason for going untested than
                             # `testable`: here a valid test exists in principle,
                             # there just isn't enough data in THIS segment
+    phi: float = 1.0        # dispersion used by _poisson_p for this row (1.0 =
+                            # plain Poisson; >1.0 = negative-binomial-corrected,
+                            # see investigation/dispersion.py). Always 1.0 for
+                            # ratio metrics (conversion_rate/aov) - _prop_p is
+                            # not implicated (PLAN.md Section 5.3).
+    phi_tier: str = "poisson"  # "own" | "dimension" | "global" | "poisson"
 
 
 def benjamini_hochberg(p: np.ndarray) -> np.ndarray:
@@ -106,13 +112,33 @@ def _verdict(contribution: float, q: float, kind: str = "segment",
     return "unsupported"
 
 
-def _poisson_p(actual: float, expected: float) -> float:
-    """Two-sided Poisson tail for count metrics (sessions, transactions)."""
+def _poisson_p(actual: float, expected: float, phi: float = 1.0) -> float:
+    """Two-sided tail for count metrics (sessions, transactions).
+
+    `phi` is the measured dispersion (Var(actual) ~= phi * expected;
+    investigation/dispersion.py). phi=1.0 (the default) is the original pure
+    Poisson test, kept exactly - callers that don't pass phi see no change.
+    phi>1.0 uses a quasi-Poisson-parameterized Negative Binomial instead:
+    same mean, inflated variance. This was measured to matter a great deal -
+    real segment-level session counts are overdispersed by 3x to 475x
+    depending on the segment (notes/PLAN.md Section 5.3), and the plain
+    Poisson test above was producing a 70.4% false-strong rate on pure noise
+    (C1) before this was added.
+    """
     if pd.isna(actual) or pd.isna(expected) or expected <= 0:
         return np.nan
     k, lam = int(round(actual)), float(expected)
-    p = (stats.poisson.cdf(k, lam) if k < lam
-         else stats.poisson.sf(k - 1, lam))
+    if phi <= 1.0000001:
+        p = (stats.poisson.cdf(k, lam) if k < lam
+             else stats.poisson.sf(k - 1, lam))
+        return float(min(1.0, 2 * p))
+    # NB1 (quasi-Poisson) parameterization: mean=lam, Var=phi*lam.
+    # scipy's nbinom is parameterized by (n, p) with mean = n*(1-p)/p; solving
+    # for that mean/variance target gives p=1/phi, n=lam*p/(1-p).
+    p_param = 1.0 / phi
+    n_param = lam * p_param / (1 - p_param)
+    p = (stats.nbinom.cdf(k, n_param, p_param) if k < lam
+         else stats.nbinom.sf(k - 1, n_param, p_param))
     return float(min(1.0, 2 * p))
 
 
@@ -147,7 +173,9 @@ def _prop_p(num_a: float, den_a: float, num_e: float, den_e: float) -> float:
 def validate_segments(metric: str, dimension: str,
                       act: pd.DataFrame, exp: pd.DataFrame,
                       hid_base: str = "H",
-                      eligible: set[str] | None = None) -> list[Result]:
+                      eligible: set[str] | None = None,
+                      phi_lookup: dict[str, tuple[float, str]] | None = None
+                      ) -> list[Result]:
     """Test every segment of one dimension for one metric.
 
     act/exp are indexed by segment with columns sessions, transactions, revenue.
@@ -172,6 +200,11 @@ def validate_segments(metric: str, dimension: str,
     never-surfaced interaction term, so the visible shares can be far from
     ~100% on an ordinary day where blend_delta is small (found and corrected
     2026-09-27, PLAN.md Section 2).
+
+    `phi_lookup`, if given, maps segment -> (phi, tier) for `_poisson_p`'s
+    dispersion correction (investigation/dispersion.py). Only used for
+    additive metrics (sessions, transactions) - ratio metrics use `_prop_p`,
+    which is not implicated (PLAN.md Section 5.3) and always gets phi=1.0.
     """
     results: list[Result] = []
     is_ratio = metric in ("conversion_rate", "aov")
@@ -212,12 +245,17 @@ def validate_segments(metric: str, dimension: str,
         c = additive_contributions(act[metric], exp[metric])
         for seg in c.index:
             r = c.loc[seg]
-            results.append(Result(
+            phi, tier = (phi_lookup.get(str(seg), (1.0, "poisson"))
+                        if phi_lookup else (1.0, "poisson"))
+            result = Result(
                 f"{hid_base}-{seg}", "segment", metric, dimension, str(seg),
                 r["actual"], r["expected"],
                 (r["actual"] / r["expected"] - 1 if r["expected"] else np.nan),
                 r["contribution"], r["abs_contribution"],
-                _poisson_p(r["actual"], r["expected"]), np.nan, "pending"))
+                _poisson_p(r["actual"], r["expected"], phi), np.nan, "pending",
+                detail=f"dispersion-corrected count test; phi={phi:.1f} tier={tier}")
+            result.phi, result.phi_tier = phi, tier
+            results.append(result)
 
     # Mark ineligible segments (kept, not dropped: their contribution stays
     # visible rather than silently making the ELIGIBLE segments' own shares

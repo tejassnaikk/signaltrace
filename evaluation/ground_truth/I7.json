@@ -24,13 +24,25 @@
   },
   "note": "I1's mechanism (factor 0.6) and I2's mechanism (factor 0.7), applied independently to the same date. Note I7 uses smaller magnitudes than I1/I2's own standalone incidents (-40%/-30% here vs -50%/-40% there).",
   "dates": [
-    "2017-02-02",
     "2017-02-08",
     "2017-05-23",
+    "2017-06-08",
     "2017-06-28",
     "2017-07-04"
   ],
-  "dates_revision": "re-screened 2026-09-27; supersedes 2016-11-08/12-05/2017-01-12/02-08/03-10, of which only 2017-02-08 passed both sub-conditions simultaneously when actually simulated. Both I1's and I2's individual date-selection problems apply here at once, and I7's own conversion cut (-30%) is smaller than I2's already power-limited -40%, making it the binding constraint: only 9/104 non-colliding candidate dates clear the conversion_rate sub-condition alone, vs 77/104 for sessions. Only 3/104 cleared all three checks (sessions, conversion_rate, cross-contamination) as strict gates -- too few to fill 5 slots, hence cross-contamination and the revenue-factor shares were downgraded to reported (see pass_condition_revision) to recover 7 viable dates. See notes/PLAN.md 5.1.",
+  "dates_revision": "re-screened 2026-09-27; supersedes 2016-11-08/12-05/2017-01-12/02-08/03-10, of which only 2017-02-08 passed both sub-conditions simultaneously when actually simulated. Both I1's and I2's individual date-selection problems apply here at once, and I7's own conversion cut (-30%) is smaller than I2's already power-limited -40%, making it the binding constraint: only 9/104 non-colliding candidate dates clear the conversion_rate sub-condition alone, vs 77/104 for sessions. Only 3/104 cleared all three checks (sessions, conversion_rate, cross-contamination) as strict gates -- too few to fill 5 slots, hence cross-contamination and the revenue-factor shares were downgraded to reported (see pass_condition_revision) to recover 7 viable dates. See notes/PLAN.md 5.1. FURTHER REVISED 2026-09-27 (Poisson fix): 2017-02-02 and 2017-02-08 both initially failed under an interim OWN_MIN_N=120 design (q=0.78, q=0.86 -- the pre-2017-02-28 dimension-tier overcorrection also found for I1). Investigating this led to lowering OWN_MIN_N to 84 (investigation/dispersion.py); re-verified with that final design, 2017-02-08 passes (verdict=strong, q=0.048 -- genuinely marginal, flagged below) while 2017-02-02 still fails (q=0.12) and needed one replacement: 2017-06-08, found by re-screening the pool restricted to dates >=2017-02-28 (confirmed via a before/after check that Referral's conversion_rate pass rate is NOT seasonally different across that boundary, 9.1% vs 8.5% -- the earlier apparent scarcity was fully explained by already having spent most of the pool's good dates on this incident's kept slots, not a real calendar effect or a search bug). Net: swapped 2017-02-02 -> 2017-06-08 only; kept 2017-02-08.",
+  "marginal_date_note": "2017-02-08: Organic Search sessions q=0.048, verdict=strong -- clears the 0.05 bar but by a thin margin (tier=own, phi=31.4, n_own just above OWN_MIN_N=84). Kept, per the date-retention rule below, applied identically to 2017-02-02 (which failed it and was replaced).",
+  "date_retention_rule": "Stated once, applied uniformly to both of this incident's contested dates: if a candidate clears its required verdict bar under the CURRENT design, as actually measured, keep it and report the margin however thin -- do not swap it away in search of a safer q. Only replace a candidate that fails its bar outright. 2017-02-02 (q=0.1215, material_but_uncertain) did not clear 'strong' -> replaced. 2017-02-08 (q=0.048, strong) did clear it, by 0.002 -> kept, margin logged. See notes/PLAN.md 5.3.",
+  "pool_pass_rate_post_fix": {
+    "n_candidates": 104,
+    "sessions_side_pass": 64,
+    "sessions_side_rate": 0.615,
+    "conversion_rate_side_pass": 9,
+    "conversion_rate_side_rate": 0.087,
+    "both_pass": 6,
+    "both_rate": 0.058,
+    "note": "Sessions-side pass rate dropped from 77/104 (77.0%) pre-fix to 64/104 (61.5%) post-fix -- the dispersion correction makes the sessions test appropriately harder to satisfy on average, not easier. conversion_rate side unchanged (9/104, _prop_p untouched). Combined pass rate rose slightly, 3/104 -> 6/104, since 2017-02-08 and 2017-06-08 both now clear it."
+  },
   "forced_metrics": ["sessions", "conversion_rate"],
   "pass_condition": {
     "sessions_channel": {

@@ -5,10 +5,11 @@ import os
 import sys
 
 import duckdb
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from detection.config import SEGMENT_GATES
+from detection.config import EXCLUDE_DATES, SEGMENT_GATES
 from metrics.dependency_graph import DIMENSIONS
 
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -37,6 +38,32 @@ def segment_series(dimension: str, con=None) -> pd.DataFrame:
         con.close()
     df["date"] = pd.to_datetime(df["date"])
     return df
+
+
+def segment_expectation(seg: pd.DataFrame, col: str, weeks: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Trailing same-weekday median per segment. Same method as the top level,
+    applied within each segment. Strictly backward-looking.
+
+    Shared by investigation/orchestrator.py (segment validation) and
+    investigation/dispersion.py (phi measurement) - moved here from
+    orchestrator.py so both can use one implementation without a circular
+    import between them."""
+    piv = seg.pivot(index="date", columns="segment", values=col).sort_index()
+    # Mask known bad days BEFORE taking lags, as build_expectation does at the
+    # top level, so the 2016-08-03 data gap cannot enter any segment baseline.
+    clean = piv.copy()
+    clean.loc[clean.index.isin(pd.to_datetime(sorted(EXCLUDE_DATES)))] = np.nan
+    # Median across the `weeks` same-weekday lags, computed per column.
+    # (pandas 2.x removed groupby(axis=1), so stack the lags and take the
+    # element-wise median directly.)
+    lags = np.stack([clean.shift(7 * k).to_numpy(dtype=float)
+                     for k in range(1, weeks + 1)])
+    exp = pd.DataFrame(np.nanmedian(lags, axis=0),
+                       index=piv.index, columns=piv.columns)
+    # A column with fewer than `weeks` observed lags must stay NaN rather than
+    # silently median over whatever happens to exist.
+    exp = exp.mask(np.isnan(lags).any(axis=0))
+    return piv, exp
 
 
 def eligibility(df: pd.DataFrame) -> pd.DataFrame:

@@ -17,7 +17,7 @@
     "2017-06-13",
     "2017-07-05"
   ],
-  "dates_revision": "re-screened 2026-09-27; supersedes the original 2016-10-24/11-18/12-20/2017-01-16/02-10 set, which passed the top-level composed-detector exclusion filter (PLAN.md 5.1) but not a per-channel real-noise check. See notes/PLAN.md 5.1, 'I1 dates re-screened'.",
+  "dates_revision": "re-screened 2026-09-27; supersedes the original 2016-10-24/11-18/12-20/2017-01-16/02-10 set, which passed the top-level composed-detector exclusion filter (PLAN.md 5.1) but not a per-channel real-noise check. See notes/PLAN.md 5.1, 'I1 dates re-screened'. CHECKED AGAIN 2026-09-27 (Poisson fix): under an interim OWN_MIN_N=120 design, 2017-01-26 fell in the pre-2017-02-28 window and its verdict dropped to material_but_uncertain (q=0.66). Investigating this led to lowering OWN_MIN_N to 84 (see investigation/dispersion.py) - re-verified with that final design, 2017-01-26 passes cleanly again (verdict=strong, q=0.003, tier=own). No date change needed after all; kept the original 5 dates.",
   "forced_metrics": ["sessions"],
   "pass_condition": {
     "dimension": "channel",
