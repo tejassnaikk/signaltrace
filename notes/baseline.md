@@ -320,7 +320,19 @@ ineligible segments are marked, never dropped.
 |---|---|---|---|---|---|---|
 | 2017-03-04 | conversion_rate x channel | Social | 14.6% | 0.0030 | strong | **material_untested** (ineligible_segment) |
 | 2017-03-04 | conversion_rate x country | Other | 46.7% | 0.0000 | strong | **material_untested** (ineligible_segment) |
-| 2016-12-26 | sessions x country | Vietnam, Thailand, Turkey | 13.5%/10.5%/5.9% | ~0 | strong | **strong (unchanged)** - see note above |
+| 2016-12-26 | sessions x country | Vietnam, Thailand, Turkey | 13.5%/10.5%/5.9% | ~0 | strong | **strong (unchanged)** - see note above [^stale-strong] |
+
+[^stale-strong]: **STALE as of 2026-09-27 (PLAN.md Section 5.3, "Poisson fix"):**
+"strong (unchanged)" was correct with respect to the ELIGIBILITY fix this
+table documents - eligibility gating did not change these three countries'
+verdict. A LATER, separate fix (the dispersion-corrected `_poisson_p`, not
+built yet when this table was written) DOES change it: re-run under the
+current test, all three now come back **unsupported** (Vietnam q=0.381,
+Thailand q=0.381, Turkey q=0.560, all `phi_tier=dimension`, vs the q~0 the
+uncorrected Poisson test gave here). Left the original row as-is rather than
+rewritten, since it's still an accurate record of what the eligibility fix
+did and did not change - only the "current state" implication is out of
+date.
 
 Per-dimension contribution-share sums, identical before and after: sessions
 x channel 1.000, x country 1.000, x device 1.000; conversion_rate x channel

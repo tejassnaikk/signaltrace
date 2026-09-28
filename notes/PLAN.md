@@ -319,6 +319,153 @@ share (a display bug found and fixed during M3: `contribution =
 way, so printing it with a `+` sign beside a metric that *fell* read as
 though the segment rose).
 
+### 3.11 M2b — log-space residuals (proposal frozen 2026-09-27, no injector run yet)
+
+Pre-registered in notes/baseline.md ("Detection power," recorded 2026-09-26):
+log-space residuals become milestone M2b after M3 passes, to fix the
+documented asymmetry that a decline in a positive quantity is bounded at
+-100% while a rise is not, so the current absolute-unit residual has no
+power to detect real declines in conversion_rate/AOV (measured: 0-5%
+detection at -30% to -90%). **Scope: detection only** - no changes to
+investigation/, metrics/segments.py's `segment_expectation`, or the
+revenue-composition rule; `detect_components`/`annotate_concentration`'s
+structure is unchanged, only the residual definition feeding them.
+
+**Residual and window selection, chosen ONLY from a real-data bias and
+crossing-rate sweep (same criterion as Section 3.4/3.5), before any
+injector run:**
+
+Residual: `ln(actual) - ln(expected)`, same median-of-same-weekday-lags
+baseline as today, just computed on log-transformed values. Swept the same
+three candidate windows the original design considered (4/8/12 weeks) per
+component, over the untouched 281-day detection range:
+
+| component | window | median (bias) | MAD | raw crossings | crossings excl. known real/whale days |
+|---|---|---|---|---|---|
+| sessions | 4wk | +0.0102 | 0.1221 | 11 (3.9%) | 7 (2.5%) |
+| sessions | 8wk | +0.0174 | 0.1557 | 12 (4.3%) | 8 (2.8%) |
+| **sessions** | **12wk** | **-0.0046** | **0.2110** | **5 (1.8%)** | **2 (0.7%)** |
+| conversion_rate | **4wk** | **+0.0056** | **0.3657** | **4 (1.4%)** | **2 (0.7%)** |
+| conversion_rate | 8wk | +0.0437 | 0.3537 | 3 (1.1%) | 2 (0.7%) |
+| conversion_rate | 12wk | +0.0325 | 0.3488 | 3 (1.1%) | 2 (0.7%) |
+| aov | 4wk | -0.0247 | 0.4351 | 0 (0.0%) | 0 (0.0%) |
+| **aov** | **8wk** | **+0.0054** | **0.3880** | **1 (0.4%)** | **0 (0.0%)** |
+| aov | 12wk | -0.0104 | 0.3891 | 1 (0.4%) | 0 (0.0%) |
+
+**Frozen: sessions=12wk (unchanged from today), conversion_rate=4wk
+(CHANGED from today's 8wk), aov=8wk (CHANGED from today's 12wk).** Sessions
+reconfirms the existing choice outright - clearly lowest bias and crossings.
+The other two are genuine, measured deviations from precedent, not
+reused defaults: in log-space, conversion_rate's bias is smallest at 4wk
+(0.0056 vs 0.033-0.044 at 8/12wk) with an essentially-tied crossing rate
+(4 vs 3 - not a meaningful difference at these counts); AOV's bias is
+smallest at 8wk, and 4wk's zero-crossing result is treated as suspiciously
+low (an under-powered/too-conservative window, the same reasoning Section
+3.5 used to reject "zero alerts" as a detection goal), not as the best
+outcome. z-threshold stays at 4.0, matching the existing uniform convention;
+not re-tuned, since the criterion here is about window choice, not the
+threshold itself.
+
+**Median's log-space bias, reported explicitly:** all three chosen
+windows land under 1% in log-return terms (sessions -0.46%, conversion_rate
++0.56%, aov +0.54%) - comfortably smaller than the -11.3% mean-vs-median
+bias that originally justified using the median at all (Section 3.4). The
+median-of-lags baseline appears well-behaved in log-space across all three
+components; no new bias-correction step is needed.
+
+**Per-weekday scaling, re-tested (not assumed to carry over from the
+absolute-residual finding):** MAD ratio to the pooled value, by weekday, at
+the frozen windows - sessions 0.60x (Wed) to 1.19x (Tue), conversion_rate
+0.81x (Wed/Thu) to 1.46x (Sun), aov 0.79x (Mon) to 1.29x (Sun). Max spread
+observed is ~2x (conversion_rate/aov, both driven by Sunday) - still far
+short of the ~4x that would justify per-weekday scaling (the same threshold
+Section 3.5's original test used, finding 1.4x and rejecting it). **Re-
+confirmed, not merely assumed: no per-weekday scaling in log-space either**,
+though conversion_rate and AOV both show mildly more weekend heterogeneity
+than sessions did originally - worth another look if a later re-measurement
+shows the spread growing, not dismissed permanently.
+
+**Pre-registered predictions for the 41 date-metric checks, computed from
+segment weights on REAL data - before running the injector on any of
+them.** The organizing idea, stated first: **every one of I1/I2/I3/I3b/I7's
+mechanisms is a single-segment cut, and detection operates on the AGGREGATE
+series, not the segment level - the injected effect gets diluted by
+whatever fraction of the business that segment ISN'T** (this is the exact
+reason forced investigation exists in the first place, Section 5.1). Using
+real per-segment session/transaction shares (notes/baseline.md) and each
+component's frozen log-space MAD to convert "how far from the aggregate
+baseline would this dilute to" into a z-score:
+
+| incident | mechanism weight in the aggregate | diluted aggregate move | log-move vs. threshold (4x MAD) | prediction |
+|---|---|---|---|---|
+| I1/I7 (Organic Search sessions) | 43.0% of sessions | -21.5% / -17.2% | \|ln\|=0.24/0.19 vs 0.844 needed | **False** |
+| I2/I7 (Referral conversion) | 11.8% of sessions (mix weight) | -4.7% / -3.5% blended CR | \|ln\|=0.05/0.04 vs 1.464 needed | **False** |
+| I3/I3b (Direct AOV) | 18.3% of transactions | -5.5% blended AOV | \|ln\|=0.06 vs 1.552 needed | **False** |
+| I4 (AOV everywhere, NOT diluted) | 100% | -25% blended AOV | \|ln\|=0.29 vs 1.552 needed | **False** |
+| I5 (Desktop conversion) | 73.5% of sessions (largest weight of any incident) | -36.8% blended CR | \|ln\|=0.46 vs 1.464 needed | **False** |
+| I6 (mix shift, device->device) | ~22.1% of sessions reallocated | ~-20.7% blended CR (via the mix term, not a within-effect) | \|ln\|=0.23 vs 1.464 needed | **False** |
+
+**Predicted result: none of the 41 checks flip to True from the injected
+effect itself** - even I4 (undiluted) and I5 (minimally diluted, the
+largest weight of any single-segment incident) fall well short of the
+log-space threshold, because the floor itself requires a genuinely large
+relative move (roughly -45% to -80% depending on component) to cross z=4,
+not because log-space failed to help - it did help (Section on detection
+power below), it just isn't a large enough help to rescue THESE specific
+magnitudes once diluted.
+
+**One exception, found by checking REAL (uninjected) data directly, not
+from dilution arithmetic:** the real, unmodified conversion_rate on
+**2017-07-04 already crosses z=-4.00 in log-space on its own**, before any
+injection. 2017-07-04 is one of the 41 dates (I7's). Since I7's injected
+Referral cut is a decline in the SAME direction, stacking it on an already-
+anomalous real background is expected to cross more clearly, not less.
+**Predicted exception: I7's conversion_rate check on 2017-07-04 flips to
+True** - not because the injected magnitude is large enough alone (it
+isn't, per the table above), but because the real background that day
+already is. No date change is being made in response to this; it's
+reported as a prediction to verify, per instruction.
+
+**Newly-firing real days under the frozen design, checked against the old
+exclusion buffer and the 41 dates (detection only, no injection):**
+
+| date | metric (window) | z | in old exclusion buffer? | one of the 41? |
+|---|---|---|---|---|
+| 2016-12-24, 12-26, 12-30, 12-31, 2017-01-02 | sessions (12wk) | -4.1 to -4.9 | yes (Christmas cluster) | no |
+| 2016-12-11 | conversion_rate (4wk) | +4.22 | yes | no |
+| 2017-03-04 | conversion_rate (4wk) | +4.97 | yes (already a known real incident) | no |
+| **2017-07-01** | conversion_rate (4wk) | -5.13 | **no** | no |
+| **2017-07-04** | conversion_rate (4wk) | -4.00 | **no** | **yes (I7)** |
+| 2017-04-05 | aov (8wk) | +4.41 | yes (already a known whale day) | no |
+
+7 of 8 new crossings fall inside dates already known/excluded (the Christmas
+cluster, 2017-03-04's already-documented real incident, 2017-04-05's
+already-documented whale day) - the log-space detector is mostly
+rediscovering the same known signal, which is a good consistency check, not
+a sign it's firing arbitrarily. **2017-07-01 is genuinely new** - not
+excluded, not one of the 41 - and needs the same concentration-check
+treatment as any other AOV/conversion candidate before being called
+anything (Section 2 of the M2b proposal). **2017-07-04 is the exception
+above.** No dates are being changed as a result of this table.
+
+**Config-flag design (proposal, not yet implemented):** `detection/
+config.py` gets a `RESIDUAL_SCALE` setting ("absolute" | "log"), each with
+its OWN window/floor config (the two scales are not assumed to share window
+lengths - they don't, per the sweep above). `detection/expectation.py`'s
+`build_expectation` branches on it. The SAME harness
+(`detect_components`/`annotate_concentration`/`evaluation/score.py`'s
+`detector_fired` check) produces both "before" and "after" by toggling the
+flag - no duplicated detection module, no drift between the two.
+
+**Floors and the separability gate still need re-measuring properly once
+this is implemented** - the sweep above establishes WINDOW choice; the
+actual false-positive FLOOR at z=4 with these windows (the number that
+matters for the separability gate, Section 3.5's criterion) is the raw-
+crossings percentage already in the table (sessions 1.8%, conversion_rate
+1.4%, aov 0.4%) but should be re-verified end-to-end through the real
+`detect_components` code path, not just this standalone sweep, before being
+called the frozen floor.
+
 ---
 
 ## 4. Phase 2 — Agent layer (unchanged from original plan)
@@ -828,25 +975,52 @@ to I5's two flagged dates and to C1's dates generally: report what the
 measurement actually says, don't curate away genuine boundary cases in
 either direction.
 
-**I7's pre-selection pool pass rate, recomputed after the fix** (same
-"engine-performance figure vs. pipeline-consistency-check" distinction as
-Section 5.2's table): across the full 104-candidate pool, under the current
-dispersion-corrected pipeline, sessions-side alone 64/104 (61.5%,
-down from 77/104 under the old uncorrected test - the correction makes the
-sessions test appropriately harder to satisfy, not easier), conversion_rate
-side unchanged at 9/104 (8.7%), **both together: 6/104 (5.8%)**, up
-slightly from the pre-fix figure of 3/104 (2017-02-08 and 2017-06-08 both
-now clearing that didn't before).
+**I7's pre-selection pool pass rate, corrected 2026-09-27 - an earlier note
+compared the wrong two numbers.** Two conditions were ever measured on the
+104-candidate pool, and they must not be crossed:
+- **Final design (cross-contamination reported, not gated)** - the ACTUAL
+  pass condition (Section 5.2): sess_pass AND cr_pass, nothing else gated.
+  Old (uncorrected) pipeline: **7/104 (6.7%)** - this is the figure M3k
+  originally reported. New (dispersion-corrected) pipeline: **6/104 (5.8%)**.
+  **7/104 -> 6/104 is the correct before/after comparison**: a small
+  DECREASE, consistent with the mechanism (dispersion correction makes the
+  sessions test appropriately harder to satisfy: sess_pass alone dropped
+  77/104 -> 64/104; cr_pass alone is unchanged at 9/104, `_prop_p` untouched).
+- **All-three-strict-gated (cross-contamination included as a gate)** - an
+  EARLIER, ABANDONED condition design, from before cross-contamination was
+  downgraded to reported-only (Section 5.2's revision note): **3/104**, old
+  pipeline only, never re-measured post-fix because that design was already
+  dropped before I7's dates were chosen.
 
-**The Referral conversion_rate pass-rate question, resolved with numbers.**
-`_prop_p` was never touched, so it cannot be the explanation for anything
-that moved - and confirmed it didn't move: before vs. after 2017-02-28,
-recomputed on the CURRENT pipeline, cr_pass is 3/34 (8.8%) vs 6/70 (8.6%) -
-statistically indistinguishable, matching the pre-fix measurement of 9.1%
-vs 8.5% almost exactly. The earlier apparent "drop" to 3/67 during date
-re-screening was arithmetic, not a seasonal or code effect: 3 of the ~6
-available good dates in that window were already spent on I7's kept slots,
-leaving 3 free - not a smaller pass rate, a smaller remaining pool.
+  An earlier version of this note incorrectly compared the NEW final-design
+  figure (6/104) against this OLD, different-condition figure (3/104),
+  producing a false "up from 3 to 6" - the real comparison is 7/104 -> 6/104,
+  a decrease, and the "3/104" number is not a "pre-fix" measurement of the
+  same thing at all.
+
+**The Referral conversion_rate pass-rate question - named cause, not just
+"they agree now."** `_prop_p` was never touched, so it cannot explain
+anything that changed - and it demonstrably didn't: measured on the SAME
+104-candidate POPULATION both times, before vs. after 2017-02-28 is 9.1%
+(pre-fix) vs 8.8% (post-fix), and 8.5% (pre-fix) vs 8.6% (post-fix) - stable
+across the pipeline change, as expected.
+
+**What the earlier "3/67" figure actually was, precisely reconstructed:**
+NOT a third measurement of the same population rate - it counted REMAINING,
+UNCLAIMED candidates only. Of the 71 candidates in the 104-pool's
+after-2017-02-28 slice, 6 have `cr_pass=True`: 2017-05-17, 05-18, 05-23,
+06-08, 06-28, 07-04. Four of those six (05-23, 06-08, 06-28, 07-04) were
+already I7's own kept/chosen dates at that point in the search - not
+available to "find" again - and 3 of THOSE four are themselves cr_pass=True
+hits, so removing them removes 3 hits from a 6-hit, 71-candidate slice,
+leaving 3 hits in a ~65-candidate remaining pool (the exact "67" quoted
+earlier differs by a small, immaterial bookkeeping delta in which other
+incidents' dates were excluded at that point in the session - not a second
+population, just a slightly different snapshot of the same one). **The
+per-day probability of a candidate clearing cr_pass never changed** (~8.5-
+9% throughout); the visible count of REMAINING opportunities shrank because
+most of the pool's hits had already been claimed, which is expected and not
+evidence of anything code- or calendar-related.
 
 **Full re-verification after the fix, evaluation/score.py:**
 - C1, full (not just sessions): overall 5/78 material-tested pairs strong
@@ -899,7 +1073,17 @@ already used to validate the eligibility fix, notes/baseline.md):**
 | channel=Organic Search | 18.3% | 175.5 | dimension | 1.0e-39 | strong | 0.463 | unsupported |
 | country=Other | 30.8% | 279.5 | dimension | 2.4e-103 | strong | 0.381 | material_but_uncertain |
 | country=Vietnam | 13.5% | 279.5 | dimension | 3.0e-111 | strong | 0.381 | unsupported |
+| country=Thailand | 10.5% | 279.5 | dimension | 2.5e-86 | strong | 0.381 | unsupported |
+| country=Turkey | 5.9% | 279.5 | dimension | 3.4e-39 | strong | 0.560 | unsupported |
 | device=desktop | 102.7% | 229.2 | global | 0.0000 | strong | 1.0e-4 | **strong (unchanged)** |
+
+Vietnam/Thailand/Turkey here directly supersede notes/baseline.md's
+"strong (unchanged)" claim for the same three segments (the M3i eligibility-
+fix verification table, line ~323) - that claim was correct about the
+ELIGIBILITY fix (it didn't touch their eligibility status) but is now stale
+about their CURRENT verdict, since this later fix does change it. Annotated
+in baseline.md with a footnote pointing back here rather than rewritten, to
+keep that table's historical record of the eligibility fix intact.
 
 *2017-03-04 (real conversion_rate +564.4% incident):*
 

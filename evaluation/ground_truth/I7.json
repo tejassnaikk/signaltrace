@@ -41,7 +41,7 @@
     "conversion_rate_side_rate": 0.087,
     "both_pass": 6,
     "both_rate": 0.058,
-    "note": "Sessions-side pass rate dropped from 77/104 (77.0%) pre-fix to 64/104 (61.5%) post-fix -- the dispersion correction makes the sessions test appropriately harder to satisfy on average, not easier. conversion_rate side unchanged (9/104, _prop_p untouched). Combined pass rate rose slightly, 3/104 -> 6/104, since 2017-02-08 and 2017-06-08 both now clear it."
+    "note": "Sessions-side pass rate dropped from 77/104 (74.0%) pre-fix to 64/104 (61.5%) post-fix -- the dispersion correction makes the sessions test appropriately harder to satisfy on average, not easier. conversion_rate side unchanged (9/104, _prop_p untouched). CORRECTED 2026-09-27: combined pass rate under the actual final design (cross-contamination reported, not gated) is 7/104 pre-fix -> 6/104 post-fix, a small DECREASE, not an increase -- an earlier note here wrongly compared against 3/104, which was an abandoned all-three-strict-gated design, not the same condition. See notes/PLAN.md 5.3."
   },
   "forced_metrics": ["sessions", "conversion_rate"],
   "pass_condition": {
