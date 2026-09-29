@@ -33,6 +33,22 @@ from metrics.segments import segment_expectation, segment_series
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                   "data", "signaltrace.duckdb")
 
+# CONCENTRATED thresholds (PLAN.md Section 8, revised 2026-09-28). Device/
+# country reuse I5's already-validated absolute thresholds (Section 5.2) -
+# structurally near-constant dimensions need a fixed floor, not a percentile.
+# Channel reuses the rank+sign+verdict pattern from I1/I2/I3/I7 - a shared,
+# noisy denominator needs a verdict check, not a %-share threshold.
+CONCENTRATED_DEVICE_MIN = 0.90
+CONCENTRATED_COUNTRY_MIN = 0.70
+# {strong, plausible} only, NOT +material_but_uncertain - matches the bar
+# actually used anywhere in I1/I2/I3/I7's own channel conditions (I1/I7-
+# sessions: strong; I2/I7-conversion_rate: plausible-or-better; neither ever
+# accepted material_but_uncertain as a pass). Measured: including
+# material_but_uncertain gives a much looser, less faithful pool rate
+# (21.0% vs 2.4% of real metric-days) for a real-incident recall gain (8/15
+# vs 3/15) that isn't worth breaking the established precedent for.
+CONCENTRATED_CHANNEL_VERDICTS = {"strong", "plausible"}
+
 
 def _fmt_share(contribution: float) -> str:
     """Format a contribution as a share OF the movement, never as a signed
@@ -241,6 +257,25 @@ def investigate(date, con=None, verbose: bool = True,
         # When the top segment of EVERY dimension is material, the movement is
         # concentrated in one intersection rather than caused by three separate
         # things. When dimensions disagree, that is informative too.
+        #
+        # REVISED 2026-09-28 (PLAN.md Section 8): the original rule (every
+        # dimension's top segment >= 0.40 share) fired on 77.7% of ordinary,
+        # untouched metric-days - essentially always on, not a rare signal.
+        # A percentile-of-real-null-distribution fix (the same method used
+        # for I4, Section 5.2) was tried and measured to NOT work at any
+        # percentile: device and country are structurally near-constant
+        # (desktop/United States hold ~90-100% of the business most days
+        # regardless of whether anything unusual happened, notes/baseline.md
+        # "Structural pattern"), so no percentile on those two legs can ever
+        # discriminate a genuine incident from an ordinary day - confirmed by
+        # checking all 4 known whale days, which fired on 0/4 at every
+        # percentile from p75 to p95. Fixed with the SAME split already
+        # validated for I5's own condition (Section 5.2), not a new pattern:
+        # device/country get I5's absolute thresholds (they are structural,
+        # not noisy, so a fixed floor is the right tool); channel gets the
+        # rank+sign+verdict logic already used for I1/I2/I3/I7 (a shared,
+        # noisy denominator, so a raw %-share threshold is the wrong tool
+        # regardless of what number is chosen for it).
         tops = {}
         for metric in {e.metric for e in sup}:
             for dim in DIMENSIONS:
@@ -250,8 +285,17 @@ def investigate(date, con=None, verbose: bool = True,
                     top = max(rows, key=lambda x: abs(x.contribution or 0))
                     tops.setdefault(metric, []).append((dim, top))
         for metric, pairs in tops.items():
-            if len(pairs) == len(DIMENSIONS) and all(
-                    abs(t.contribution or 0) >= 0.40 for _, t in pairs):
+            if len(pairs) != len(DIMENSIONS):
+                continue
+            ok = True
+            for dim, t in pairs:
+                if dim == "device":
+                    ok &= abs(t.contribution or 0) >= CONCENTRATED_DEVICE_MIN
+                elif dim == "country":
+                    ok &= abs(t.contribution or 0) >= CONCENTRATED_COUNTRY_MIN
+                else:  # channel
+                    ok &= t.verdict in CONCENTRATED_CHANNEL_VERDICTS
+            if ok:
                 where = " + ".join(f"{t.segment}" for _, t in pairs)
                 print(f"\n  CONCENTRATED: {metric} movement sits in "
                       f"{where} (dominant in every dimension)")
