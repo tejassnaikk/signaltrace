@@ -11,13 +11,13 @@
   },
   "note": "Sessions and transactions held; only revenue scaled, so AOV = revenue/transactions drops by the same factor.",
   "dates": [
-    "2016-11-11",
+    "2017-03-10",
     "2016-11-21",
     "2017-02-27",
     "2017-03-30",
     "2017-05-01"
   ],
-  "dates_revision": "re-screened 2026-09-27; supersedes 2016-10-27/11-22/2017-01-06/01-31/02-27, of which Direct was the top-magnitude, correctly-signed AOV mover on only 1/5 dates (2017-02-27, kept in the new list) when actually simulated -- the same channel-dominance fragility found for I1. New dates additionally required Direct to be ELIGIBLE (>=50% trailing-84-day volume gate), since I3 is specifically the eligible-dates case, contrasted with I3b. See notes/PLAN.md 5.1.",
+  "dates_revision": "re-screened 2026-09-27; supersedes 2016-10-27/11-22/2017-01-06/01-31/02-27, of which Direct was the top-magnitude, correctly-signed AOV mover on only 1/5 dates (2017-02-27, kept in the new list) when actually simulated -- the same channel-dominance fragility found for I1. New dates additionally required Direct to be ELIGIBLE (>=50% trailing-84-day volume gate), since I3 is specifically the eligible-dates case, contrasted with I3b. See notes/PLAN.md 5.1. FURTHER REVISED 2026-09-28 (holiday screening fix, PLAN.md 5.1 'Holiday screening gap'): 2016-11-11 sat exactly on Veterans Day (an exact US-federal-holiday collision, the original hand-picked filter only covered Nov/Dec shopping dates and never checked the full federal calendar) and on REAL uninjected data Direct was not even the top real channel AOV mover that day (Paid Search was, +0.827 vs Direct's own -0.608) -- swapped for 2017-03-10, verified from the rebuilt 113-date USFederalHolidayCalendar-screened pool (Direct top-magnitude, correctly signed, verdict=material_untested, no other incident collision).",
   "forced_metrics": ["aov"],
   "pass_condition": {
     "dimension": "channel",

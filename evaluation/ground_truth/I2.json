@@ -13,11 +13,11 @@
   "dates": [
     "2016-10-25",
     "2016-11-14",
-    "2017-01-17",
+    "2017-02-02",
     "2017-03-31",
     "2017-05-22"
   ],
-  "dates_revision": "re-screened 2026-09-27; supersedes 2016-10-26/11-21/12-21/2017-01-17/02-20, which had the same channel-dominance fragility found for I1 (Referral was top-magnitude, correctly-signed conversion_rate mover on only 4/5 dates, and 2017-02-20 failed outright). See notes/PLAN.md 5.1.",
+  "dates_revision": "re-screened 2026-09-27; supersedes 2016-10-26/11-21/12-21/2017-01-17/02-20, which had the same channel-dominance fragility found for I1 (Referral was top-magnitude, correctly-signed conversion_rate mover on only 4/5 dates, and 2017-02-20 failed outright). See notes/PLAN.md 5.1. FURTHER REVISED 2026-09-28 (holiday screening fix, PLAN.md 5.1 'Holiday screening gap'): 2017-01-17 sat 1 day after MLK Day and, on REAL uninjected data alone, Referral's own real channel contribution was +3.421 -- 5-8x I2's own ordinary-date baseline range on its other 4 dates (+0.324 to +0.697) -- a measurable, holiday-correlated real effect, not just proximity. Swapped for 2017-02-02, verified from the rebuilt 113-date USFederalHolidayCalendar-screened pool (Referral top-magnitude, correctly signed, verdict=strong, q=0.006, no other incident collision).",
   "forced_metrics": ["conversion_rate"],
   "pass_condition": {
     "dimension": "channel",

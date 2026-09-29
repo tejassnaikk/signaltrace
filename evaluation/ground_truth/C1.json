@@ -7,12 +7,12 @@
   },
   "dates": [
     "2016-11-10",
-    "2017-01-13",
+    "2017-01-20",
     "2017-02-09",
     "2017-03-13",
     "2017-04-11"
   ],
-  "dates_revision": "deliberately NOT re-screened -- C1's purpose is to measure how often ordinary real noise produces a `strong` verdict (Section 5.3's overdispersion issue). Screening its dates for low noise would bias that measurement toward zero and defeat the point. Kept exactly as originally pre-registered.",
+  "dates_revision": "deliberately NOT re-screened -- C1's purpose is to measure how often ordinary real noise produces a `strong` verdict (Section 5.3's overdispersion issue). Screening its dates for low noise would bias that measurement toward zero and defeat the point. Kept exactly as originally pre-registered. FURTHER REVISED 2026-09-28 (holiday screening fix, PLAN.md 5.1 'Holiday screening gap'): 2017-01-13 sat 3 days after MLK Day with sessions |z|=2.71, the 94.2nd percentile of the ordinary-day |z| distribution (n=191) -- a measurable, holiday-correlated elevation, not ordinary background noise. Swapped for 2017-01-20, chosen by calendar proximity to the original date (7 days later, same season) from the rebuilt 113-date USFederalHolidayCalendar-screened pool, NOT by minimum-noise -- deliberately not re-applying the same low-noise cherry-picking C1's own design principle above rules out; verified clean (0 false strongs, n_material_tested=12) but not selected FOR that property. 2016-11-10 (sessions |z|=2.42, 89.0th percentile -- just under the same bar, and the segment that actually produced 2016-11-10's one false-strong, device/desktop conversion_rate, shows no elevation of its own) was left unswapped as a documented borderline case, per PLAN.md 5.1.",
   "forced_metrics": ["sessions", "conversion_rate"],
   "pass_condition": {
     "rule": "measurement_not_pass_fail",

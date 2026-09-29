@@ -635,11 +635,11 @@ findings point at the same day for related but distinct reasons (a real
 calendar effect on the background, and a screening gap in the original
 exclusion filter). No date change made.
 
-**5. Holiday screening gap, logged, not corrected:** the original exclusion
-filter (Section 5.1) covers Thanksgiving/Black Friday/Cyber Monday/pre-
+**5. Holiday screening gap, FIXED 2026-09-28.** The original exclusion
+filter (Section 5.1) covered Thanksgiving/Black Friday/Cyber Monday/pre-
 Christmas week only - it was never checked against the rest of the US
-federal holiday calendar. 8 of the 41 pre-registered dates fall within 3
-days of a holiday it doesn't cover:
+federal holiday calendar. 8 of the 41 pre-registered dates fell within 3
+days of a holiday it didn't cover:
 
 | incident | date | nearest holiday | gap (days) |
 |---|---|---|---|
@@ -653,12 +653,70 @@ days of a holiday it doesn't cover:
 | C1 | 2017-01-13 | MLK Day | 3 |
 
 I7 with 2017-07-04: 5/5 (M3 benchmark). I7 without it: 4/4 - the holiday
-date isn't propping up an otherwise-failing result, but two dates (I3's
-2016-11-11, I7's 2017-07-04) sit exactly on a federal holiday, which is a
-genuine gap in the original screening regardless. **No date swaps made in
-M2b, per instruction** - this is logged as a known, unaddressed screening
-gap for a future round to decide on, the same way I3/I3b/I4's channel-
-dominance fragility was logged before being fixed in a later round.
+date wasn't propping up an otherwise-failing result on its own, but two
+dates (I3's 2016-11-11, I7's 2017-07-04) sat exactly on a federal holiday,
+a genuine gap regardless of whether it happened to change the pass/fail
+outcome. No date swaps were made in M2b, per instruction at the time - this
+was logged as a known, unaddressed screening gap for a future round, the
+same way I3/I3b/I4's channel-dominance fragility was logged before being
+fixed in a later round.
+
+**Rebuild, 2026-09-28: `pandas.tseries.holiday.USFederalHolidayCalendar`
+replaces the hand-picked Nov/Dec list, same ±3-day buffer as every other
+exclusion.** 8 real federal holidays fall in the 281-day detection range -
+Veterans Day, Thanksgiving, Christmas(obs), New Year's(obs), MLK Day,
+Presidents Day, Memorial Day, Independence Day - vs. the 2 the old filter
+ever covered. Pool: 201 weekdays in range → **113** survive (was ~141-143
+under the old filter; see the reconciliation note below for why the
+remembered range and this round's recomputed baseline differ, and why both
+are correct).
+
+**141 vs. 136 reconciliation:** reconstructing the old hand-picked filter
+(single dates 11/24, 11/25, 11/28 + pre-Christmas week 12/19-12/23) against
+the pre-M2b composed-day set (13 days) reproduces 141, matching the low end
+of the remembered 141-143 range. Reapplying the IDENTICAL old filter but
+against the CURRENT, post-M2b composed-day set (15 days - M2b added
+2016-12-24/12-31/2017-07-01 and dropped 2016-12-29) gives 136, not 141. This
+is not a discrepancy to resolve - it's the same pool-size definition
+evaluated at two different, both-legitimate points in time. The entire gap
+traces to one mechanical fact: 2017-07-01 is relatively isolated (no other
+composed day already covers its ±3-day buffer), so adding it to the
+composed set removes 5 weekdays (2017-06-28 through 2017-07-04) that
+weren't excluded before; December's net change (-1 date, +2 dates, all
+clustered near the already-dense 12-26/12-30 buffers) contributes zero net
+change since those buffers already overlapped. **136 is the correct current
+baseline** (uses the composed-day set actually in force); 141 was a stale,
+pre-M2b number, correct for its own time but no longer the right thing to
+diff the holiday-calendar fix against. The holiday-calendar fix itself is
+measured against 136, not 141: 136 → 113.
+
+**Per-date empirical check (real, uninjected data, not just calendar
+proximity) - swap only where an actual effect exists, not just proximity:**
+
+| incident | date | gap | real-data finding | decision |
+|---|---|---|---|---|
+| I3 | 2016-11-11 (Veterans Day) | 0, exact | Direct is **not** the real top channel AOV mover (Paid Search is, +0.827); Direct's own real contribution is -0.608 | **swap** (exact collision) |
+| I7 | 2017-07-04 (Independence Day) | 0, exact | conversion_rate top-level z=-3.65 = 99th percentile of the ordinary-day distribution (n=191/192); on real data alone Referral is already the real top channel mover on BOTH forced metrics (sessions verdict=strong, conversion_rate verdict=plausible) | **swap** (exact collision + clearest measurable effect of all 8 - see the sharper Section 8 finding) |
+| I2 | 2017-01-17 (MLK Day) | 1 | Referral's real channel contribution is +3.421, vs. +0.324/+0.697/+0.647 on I2's 3 non-flagged dates - 5-8x the ordinary range | **swap** (measurable effect) |
+| C1 | 2017-01-13 (MLK Day) | 3 | sessions z=-2.71 = 94.2nd percentile of the ordinary-day distribution (conversion_rate ordinary, z=+0.60) | **swap** (measurable effect) |
+| C1 | 2016-11-10 (Veterans Day) | 1 | sessions z=+2.42 = 89.0th percentile - elevated but just under the p90 line used above; conversion_rate ordinary (z=-1.03); the segment that actually produces this date's one false-strong (device/desktop conversion_rate) shows no elevation of its own | **kept**, borderline, flagged explicitly rather than folded into a clean/unclean binary |
+| I1 | 2017-07-05 (Independence Day) | 1 | sessions z=0.97, ordinary; Organic Search real contribution -0.045 (negligible); real top mover is Social, verdict material_but_uncertain (not strong/plausible) - same pattern as I1's other already-vetted dates | **kept**, empirically clean |
+| I2 | 2016-11-14 (Veterans Day) | 3 | Referral real contribution +0.429, squarely inside I2's own ordinary range (0.324-0.697) | **kept**, empirically clean |
+| I3 | 2016-11-21 (Thanksgiving) | 3 | Direct real contribution +1.138, within I3's own (wide - AOV is heavy-tailed) ordinary range (0.720-3.775) | **kept**, empirically clean |
+
+**Swaps made (all re-verified 5/5 against the incident's own pass condition,
+from the rebuilt 113-date pool, no collisions with the other 40 dates):**
+
+| incident | old date | new date | verification |
+|---|---|---|---|
+| I3 | 2016-11-11 | 2017-03-10 | Direct top-magnitude, correctly signed, verdict=material_untested |
+| I7 | 2017-07-04 | 2017-02-01 | sessions strong (q=0.035), conversion_rate strong (q=0.021) - both sub-conditions clear together, the only one of 81 candidates that does (matches this incident's known compound-condition scarcity) |
+| I2 | 2017-01-17 | 2017-02-02 | Referral top-magnitude, correctly signed, verdict=strong (q=0.006) |
+| C1 | 2017-01-13 | 2017-01-20 | chosen by calendar proximity to the original date (7 days later, same season), deliberately NOT by minimum-noise - re-applying a low-noise-cherry-pick here would violate C1's own stated design principle just above. Verified clean (0/12 material-tested false-strong) but not selected for that property. |
+
+Full M3 benchmark after all 4 swaps: **34/36 unchanged.** C1 false-strong
+rate: 3/78 (3.8%) → 3/75 (4.0%) - same 3 false-strongs, smaller denominator
+from the 2017-01-13 → 2017-01-20 swap; not a regression, see Section 5.3.
 
 **Scope, confirmed:** `investigation/`, `metrics/segments.py`'s
 `segment_expectation`, and the revenue-composition rule (`REVENUE_COMPOSED`,
@@ -1414,6 +1472,8 @@ there is a known-correct incident to show in it.
 | **NEW: pooled cross-dimension ranking double-counts** | Found and fixed (3.7) |
 | **NEW: seasonality is undetectable with 12 months of data** | Found, addressed by scope cut rather than a fix (3.6) — the strongest "document the limitation" item in the project |
 | **NEW: `CONCENTRATED` false-fires on ordinary noise, and a percentile fix cannot work** | **OPEN, not fixed at time of logging (originally found 2026-09-27; measured further and found structural 2026-09-28).** Originally found on I4's uniform AOV cut (fired 5/5 on genuinely non-concentrated dates). Measured broader: the fixed `>=0.40` rule fires on **77.7% (327/421) of ordinary, untouched metric-days** across sessions/conversion_rate/aov — not a rare signal misfiring occasionally, essentially always-on. Tried the same percentile-of-real-null-distribution fix already used for I4 (Section 5.2): **does not work, at any percentile from p75 to p95.** The 4 known whale days fire on **0/4** regardless of percentile, and the (now 15, post-M2b) real composed-incident days fire on at most 2/26 metric-day pairs even at the loosest percentile tried (p75), 0/26 at p90-p95. Root cause is structural, not a threshold value: device and country are near-constant (desktop/US structurally hold ~90-100% of the business on almost any day, whale or not, notes/baseline.md "Structural pattern") so no percentile can discriminate a whale day from an ordinary one on those two legs; channel's own null distribution is separately so heavy-tailed (AOV p95 = 1020% share) that almost nothing clears it except pool outliers. AND-ing three legs where two are trivially-always-satisfied and one is nearly-never-satisfiable produces a rule that cannot discriminate anything real, regardless of calibration. Confirmed inert before any fix: `CONCENTRATED`'s only effect anywhere in the codebase is a `print()` inside `investigate()`'s verbose block - no ledger write, no return-dict field, no downstream consumer (grepped, not assumed). **FIXED 2026-09-28** (`investigation/orchestrator.py`) with the I5 split, not a percentile: device/country get I5's already-validated absolute thresholds (desktop>=90%, US>=70% - structural, not noisy, so a fixed floor is right); channel gets the rank+sign+verdict pattern from I1/I2/I3/I7, specifically `verdict in {strong, plausible}` for the top channel segment - matching the bar those incidents actually used (never `material_but_uncertain`, measured to be a much looser, less faithful choice: including it gives 21.0% pool rate and 8/15 real-incident recall vs {strong,plausible}'s 2.4% pool rate and 3/15 recall; picked the latter to stay consistent with established precedent rather than maximize recall). Verified: pool-wide firing rate 77.7% -> 2.4%; the 4 whale days still don't fire (0/4) - **structurally, not a residual gap**, since AOV's channel verdict can never be `strong`/`plausible` at all (`testable=False` forces `material_untested`, PLAN.md 3.7), so `CONCENTRATED` can now only ever fire for sessions/conversion_rate, never AOV - a deliberate, documented consequence, not an oversight; the (now 15) real composed-incident days fire on 3/15 (all sessions, the Dec 9/13/16 Social+desktop+US cluster) - a real, meaningful, rare signal again, not the previous always-on noise. Full M3 benchmark unaffected (34/36, unchanged), confirming `CONCENTRATED` remains fully inert to scoring - this was a narration-quality fix, not a behavioral one. |
+| **NEW: `CONCENTRATED` false-fires on ordinary noise, and a percentile fix cannot work** | Superseded — merged into the row above. |
+| **Holiday screening gap (Section 5.1, item 5)** | **FIXED 2026-09-28.** The original exclusion filter only ever covered Thanksgiving/Black-Friday/Cyber-Monday/pre-Christmas-week — never checked against the rest of the US federal calendar, so 8 of the 41 pre-registered dates sat within 3 days of an unscreened holiday (Veterans Day, MLK Day, Presidents Day, Memorial Day, Independence Day). Replaced with `pandas.tseries.holiday.USFederalHolidayCalendar`, same ±3-day buffer as every other exclusion. Pool shrank 136→113 of 201 weekdays (see 5.1 reconciliation note on the 141-vs-136 discrepancy — both numbers were correct for the composed-day count active when each was computed, not a bug). Per-date empirical check (real, uninjected data, not just calendar proximity) found 4 of the 8 flagged dates showed a measurable real effect and 4 did not; only the 4 with a real effect (or an exact holiday collision) were swapped — see 5.1 for the full per-date table and 5.3 for the sharper I7 framing below. **Sharper finding, not just "proximity is a gap":** I7's 2017-07-04 (exact Independence Day collision) shows a contaminated date can inflate an apparent pass by having a real, unrelated background effect coincidentally point in the SAME direction as the injected mechanism — real, uninjected data alone already put Referral at the real top channel mover on both forced metrics (sessions verdict=strong, conversion_rate verdict=plausible, top-level conversion_rate z=-3.65 = the 99th percentile of the ordinary-day distribution) — not merely adding uncorrelated noise that a large enough injection would swamp regardless. A date can pass its pass condition for the wrong reason, not just fail for the wrong reason; a contamination check needs to look for both. All 4 replacement dates re-verified 5/5 pass on the rebuilt 113-date pool; full M3 unchanged at 34/36; C1 false-strong rate 3/78 (3.8%) → 3/75 (4.0%, same 3 false-strongs, smaller denominator — not a regression, see 5.3). |
 
 ---
 
