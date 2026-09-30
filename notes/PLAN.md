@@ -730,20 +730,96 @@ config is active).
 
 ## 4. Phase 2 — Agent layer (unchanged from original plan)
 
-Not started. Tool list, LangGraph orchestration, evidence-ledger
-constraint, and the "SignalTrace Engine vs SignalTrace Agent" naming all
-carry over unchanged. One addition given 3.7: the agent's tools should
-expose the `basis` field (identity / statistical_test / decomposition_only
-/ threshold) so its narration can distinguish a tested claim from a
+Not started. Evidence-ledger constraint and the "SignalTrace Engine vs
+SignalTrace Agent" naming carry over unchanged. **[2026-09-29] LangGraph
+orchestration does NOT carry over — dropped for now, see 4.1's "LLM"
+bullet.** One addition given 3.7: the agent's tools should expose the
+`basis` field (identity / statistical_test / decomposition_only /
+threshold) so its narration can distinguish a tested claim from a
 decomposition-only one rather than reporting both with equal confidence.
+
+### 4.1 Agent tool contract (frozen 2026-09-29, no agent code yet)
+
+**Task given to both arms:** a date, with all three components (sessions,
+conversion_rate, aov) forced. This measures diagnosis, not detection —
+the real z>4 detector does not fire on the injected effects at these
+magnitudes (notes/baseline.md, "Detection power" sensitivity section;
+confirmed directly, Section 5.1's "Detector-fired data point": 0/36
+incident-date pairs fired on any forced component).
+
+**Tool design.** Tools are thin wrappers that open the DB `read_only=True`
+(or receive the harness's already-injected in-memory connection, with no
+indication to the agent that it is injected — the agent cannot tell a
+benchmark date from a real one), call the engine, record into a
+**harness-owned** `Ledger`, and return JSON-serializable dicts that
+include ledger entry ids. **The agent never holds a `Ledger`, a raw
+connection, or a `Result` object** — only the JSON a tool call returns.
+
+**Tools (three, no more):**
+- `get_factor_decomposition(date)` — the revenue factor table (sessions /
+  conversion_rate / aov: actual, expected, pct_change, contribution).
+- `test_dimension(metric, dimension)` — calls `validate_segments` for the
+  WHOLE dimension (no segment filter — see below) and returns every
+  segment row plus the mix row: verdict, basis, eligible, contribution,
+  q_value, entry_id.
+- `get_ledger_summary()` — read-only, the harness ledger's summary.
+
+**No tool takes a segment filter.** The Benjamini-Hochberg family is one
+(metric, dimension) call (`validator.py:277-282`); subsetting segments
+before testing changes every surviving q-value (confirmed directly,
+2026-09-29's read-only report, Q2), so a per-segment tool would silently
+corrupt the exact statistic it exists to expose.
+
+**Forbidden to the agent:** raw SQL; any import from `evaluation/` or
+`ground_truth/`; the `incident_id` parameter; `Ledger.record`; computing
+shares, contributions, or p-values itself. All computation happens inside
+the engine — the agent only ever reads what `test_dimension` /
+`get_factor_decomposition` return.
+
+**Final answer schema, identical for both arms:**
+- `pattern` in `{localized, broad, mix, none}`
+- `claims`: a ranked list, each `(metric, dimension, segment, direction,
+  kind in {within, mix}, evidence_ids, strength)`. An empty claims list is
+  valid.
+- `narrative`: free text.
+
+A programmatic checker rejects any claim whose `evidence_ids` don't
+resolve to an actual harness-ledger entry, or whose asserted verdict/basis
+differs from that entry's recorded verdict/basis. **Rejected claims are
+counted and reported, never silently dropped.**
+
+**The engine's own answer in this schema is derived by a rule
+pre-registered in M5, before any agent code exists** — so the
+deterministic arm's score doesn't depend on hand-labeling its output after
+the fact, and the rule can't be shaped, even unconsciously, by having
+already seen what the agent says.
+
+**C1 scoring, both arms:** the count of claims asserted on negative-control
+dates; each one is a false positive by definition (C1 has no injection).
+
+**Efficiency** is measured in `test_dimension` calls. Exhaustive coverage
+is 9 calls (3 metrics x 3 dimensions), so the headroom for an agent to
+economize is small by construction. The stronger hypothesis worth testing
+is **cross-dimension reasoning on I5 and I6** (both need a channel/device/
+country read together to get the correlated-vs-independent story right,
+Section 5.1's I5 redesign note) — stated here as a hypothesis to test in
+M6, not a result.
+
+**LLM:** `claude-sonnet-5-5` pinned, temperature 0, a plain tool-use loop
+with the Anthropic SDK — **LangGraph is dropped for now** (see the pointer
+above). 3 runs per date to measure nondeterminism.
 
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
-Not started. Pre-registration discipline, three-arm structure, and
-metrics (precision/recall/F1, top-1/top-3, attribution MAE, unsupported-
-claim rate) all carry over unchanged in principle.
+Not started. Pre-registration discipline and metrics (precision/recall/F1,
+top-1/top-3, attribution MAE, unsupported-claim rate) carry over in
+principle. **Arm structure decided 2026-09-29: two arms, not three** — the
+deterministic engine (Section 3) vs. one evidence-constrained LLM agent
+(Section 4.1). A raw-LLM-with-SQL floor is optional, attempted only after
+the agent arm works, and reported as an untuned reference point, not a
+third scored arm.
 
 **The incident table from the original plan must be rewritten** — it was
 written for the Olist tree (Orders × AOV, category/state/payment
@@ -771,8 +847,8 @@ segments) and does not map onto the GA360 tree. A revised table needs:
   that only checks "did the detector fire" would miss overconfident verdicts
   the validator produces on ordinary noise.
 
-Held-out set, in-distribution/held-out split, and the headline three-arm
-experiment are otherwise unchanged from the original plan.
+The dev/held-out split and the headline two-arm experiment are defined in
+full in Section 5.4.
 
 ### 5.1 Pre-registered incident set (dates fixed 2026-09-27, no injector code yet)
 
@@ -1389,6 +1465,52 @@ happens to be unusually far from its dimension's, could reproduce the same
 overcorrection. This is logged as a known, residual risk (Section 8), not
 claimed as closed.
 
+### 5.4 Held-out set (rule frozen 2026-09-29, dates not yet drawn)
+
+**Dev set = the existing 41 benchmark dates (Section 5.1).** All agent
+development — prompt iteration, tool debugging, any human judgment about
+whether an output "looks right" — happens only against these 41 dates.
+They are not held out and were never intended to be: they were re-screened
+and swapped by hand repeatedly throughout M3/M3m specifically because they
+needed to reliably exercise the pass conditions being designed.
+
+**Held-out set = a seeded random draw from the 113-date screened pool
+(Section 3.11's `USFederalHolidayCalendar` rebuild) minus the 41 dates
+already used**, subject to:
+- the same holiday / composed-day / whale-day ±3-day buffers already
+  built into the 113-date pool;
+- the same per-incident eligibility constraints as the dev set (e.g. I3
+  requires its target segment eligible as-of that date; I3b requires it
+  ineligible as-of that date; every incident's mechanism-specific
+  structural requirement, Section 5.1);
+- the same real-data empirical check used throughout M3m: uninjected data
+  checked in BOTH directions for the target segment/metric — a real effect
+  that would sabotage a true pass, or one that would manufacture a false
+  one — not just calendar proximity to a known date or holiday.
+
+**No screening on engine pass or fail.** The dev set WAS screened this
+way, explicitly and repeatedly (Section 5.1), and its "5/5" figures are
+documented as a pipeline-consistency check, not a diagnostic-accuracy
+number, precisely because of that screening (Section 5.2's "two different
+numbers, not one"). Screening the held-out set the same way would make its
+headline number exactly as circular as the number it exists to correct.
+
+**Not yet decided — count per incident, the seed, and whether dates may be
+shared across incidents** (I7's dev-set precedent shares a date across two
+mechanisms by logic, not by reusing another incident's date; whether that
+transfers to the held-out draw is undecided). These are decided only after
+measuring what the 113-minus-41 pool actually supports — I7's compound
+condition alone leaves very few candidates even in the dev pool (Section
+5.1: 6.7%, 7/104) — and the frozen result is written to
+`evaluation/heldout_select.py` **before any agent code exists**, the same
+measure-then-freeze discipline used for every other design choice in this
+project (Sections 3.5, 3.11, 5.1).
+
+**Headline numbers are held-out only, reported as counts, not
+percentages** — the pool is small enough, once eligibility and no-reuse
+constraints are applied across 9 incidents, that a percentage would imply
+more precision than the sample size supports.
+
 ---
 
 ## 6. Repository structure — matches what exists
@@ -1415,8 +1537,8 @@ signaltrace/
 │   ├── evidence.py               (append-only ledger)
 │   └── orchestrator.py           (end-to-end, no LLM)
 ├── agent/            [not started — Phase 2]
-├── evaluation/        [not started — Phase 3, incident set needs rewrite]
-├── app/                [not started — M4]
+├── evaluation/        [built — injector.py, score.py, ground_truth/*.json (M3 benchmark, 34/36)]
+├── app/                [built — dashboard.py (M4, commit 4b7a950)]
 ├── notes/
 │   ├── baseline.md               (all empirical findings, with numbers)
 │   ├── RESUME.md                 (session resume point)
@@ -1437,19 +1559,12 @@ original plan once their phases start.
 |---|---|---|
 | M1 | Series correct, variance understood | **DONE.** Identity exact; noise structure measured; usable range locked |
 | M2 | Zero alerts on normal periods; Black Friday handled | **DONE, gate renegotiated.** Separability gate instead; Black Friday not classifiable (3.6) |
-| M3 | Dev incidents 1–6 correctly diagnosed | **Functionally done, gate NOT YET TESTED.** Pipeline runs correctly on real anomalies; the injected benchmark incidents from Section 5 don't exist yet, so the stated exit criterion is unverified |
-| M4 | Streamlit dashboard | Not started |
-| M5 | Phase 1 complete, held-out incidents evaluated | Not reached — stop-safe checkpoint |
-| M6 | LangGraph agent reproduces M3 conclusions | Not started |
-| M7 | Chat interface | Not started |
-| M8 | Three-arm evaluation, README, writeup | Not started |
-
-**Before M4, consider closing the M3 gap:** build a minimal incident
-injector and run the six development incidents (revised per Section 5)
-against the orchestrator. This is cheap relative to the value — it is the
-first real test of whether the engine's diagnoses are *correct*, not
-merely well-formatted, and M4's dashboard will be more meaningful once
-there is a known-correct incident to show in it.
+| M3 | Dev incidents 1–6 correctly diagnosed | **DONE.** Injected benchmark (Section 5) built and scored: 34/36 |
+| M4 | Streamlit dashboard | **DONE.** commit 4b7a950 |
+| M5 | Held-out set pre-registered and frozen, engine scored on it | Not reached — stop-safe checkpoint |
+| M6 | Evidence-constrained agent, developed on the existing 41 benchmark dates only | Not started |
+| M7 | Two-arm evaluation on held-out, README, writeup | Not started |
+| M8 (optional) | Raw-LLM floor, chat interface, Olist generalization | Not started |
 
 ---
 
@@ -1474,6 +1589,7 @@ there is a known-correct incident to show in it.
 | **NEW: `CONCENTRATED` false-fires on ordinary noise, and a percentile fix cannot work** | **OPEN, not fixed at time of logging (originally found 2026-09-27; measured further and found structural 2026-09-28).** Originally found on I4's uniform AOV cut (fired 5/5 on genuinely non-concentrated dates). Measured broader: the fixed `>=0.40` rule fires on **77.7% (327/421) of ordinary, untouched metric-days** across sessions/conversion_rate/aov — not a rare signal misfiring occasionally, essentially always-on. Tried the same percentile-of-real-null-distribution fix already used for I4 (Section 5.2): **does not work, at any percentile from p75 to p95.** The 4 known whale days fire on **0/4** regardless of percentile, and the (now 15, post-M2b) real composed-incident days fire on at most 2/26 metric-day pairs even at the loosest percentile tried (p75), 0/26 at p90-p95. Root cause is structural, not a threshold value: device and country are near-constant (desktop/US structurally hold ~90-100% of the business on almost any day, whale or not, notes/baseline.md "Structural pattern") so no percentile can discriminate a whale day from an ordinary one on those two legs; channel's own null distribution is separately so heavy-tailed (AOV p95 = 1020% share) that almost nothing clears it except pool outliers. AND-ing three legs where two are trivially-always-satisfied and one is nearly-never-satisfiable produces a rule that cannot discriminate anything real, regardless of calibration. Confirmed inert before any fix: `CONCENTRATED`'s only effect anywhere in the codebase is a `print()` inside `investigate()`'s verbose block - no ledger write, no return-dict field, no downstream consumer (grepped, not assumed). **FIXED 2026-09-28** (`investigation/orchestrator.py`) with the I5 split, not a percentile: device/country get I5's already-validated absolute thresholds (desktop>=90%, US>=70% - structural, not noisy, so a fixed floor is right); channel gets the rank+sign+verdict pattern from I1/I2/I3/I7, specifically `verdict in {strong, plausible}` for the top channel segment - matching the bar those incidents actually used (never `material_but_uncertain`, measured to be a much looser, less faithful choice: including it gives 21.0% pool rate and 8/15 real-incident recall vs {strong,plausible}'s 2.4% pool rate and 3/15 recall; picked the latter to stay consistent with established precedent rather than maximize recall). Verified: pool-wide firing rate 77.7% -> 2.4%; the 4 whale days still don't fire (0/4) - **structurally, not a residual gap**, since AOV's channel verdict can never be `strong`/`plausible` at all (`testable=False` forces `material_untested`, PLAN.md 3.7), so `CONCENTRATED` can now only ever fire for sessions/conversion_rate, never AOV - a deliberate, documented consequence, not an oversight; the (now 15) real composed-incident days fire on 3/15 (all sessions, the Dec 9/13/16 Social+desktop+US cluster) - a real, meaningful, rare signal again, not the previous always-on noise. Full M3 benchmark unaffected (34/36, unchanged), confirming `CONCENTRATED` remains fully inert to scoring - this was a narration-quality fix, not a behavioral one. |
 | **NEW: `CONCENTRATED` false-fires on ordinary noise, and a percentile fix cannot work** | Superseded — merged into the row above. |
 | **Holiday screening gap (Section 5.1, item 5)** | **FIXED 2026-09-28.** The original exclusion filter only ever covered Thanksgiving/Black-Friday/Cyber-Monday/pre-Christmas-week — never checked against the rest of the US federal calendar, so 8 of the 41 pre-registered dates sat within 3 days of an unscreened holiday (Veterans Day, MLK Day, Presidents Day, Memorial Day, Independence Day). Replaced with `pandas.tseries.holiday.USFederalHolidayCalendar`, same ±3-day buffer as every other exclusion. Pool shrank 136→113 of 201 weekdays (see 5.1 reconciliation note on the 141-vs-136 discrepancy — both numbers were correct for the composed-day count active when each was computed, not a bug). Per-date empirical check (real, uninjected data, not just calendar proximity) found 4 of the 8 flagged dates showed a measurable real effect and 4 did not; only the 4 with a real effect (or an exact holiday collision) were swapped — see 5.1 for the full per-date table and 5.3 for the sharper I7 framing below. **Sharper finding, not just "proximity is a gap":** I7's 2017-07-04 (exact Independence Day collision) shows a contaminated date can inflate an apparent pass by having a real, unrelated background effect coincidentally point in the SAME direction as the injected mechanism — real, uninjected data alone already put Referral at the real top channel mover on both forced metrics (sessions verdict=strong, conversion_rate verdict=plausible, top-level conversion_rate z=-3.65 = the 99th percentile of the ordinary-day distribution) — not merely adding uncorrelated noise that a large enough injection would swamp regardless. A date can pass its pass condition for the wrong reason, not just fail for the wrong reason; a contamination check needs to look for both. All 4 replacement dates re-verified 5/5 pass on the rebuilt 113-date pool; full M3 unchanged at 34/36; C1 false-strong rate 3/78 (3.8%) → 3/75 (4.0%, same 3 false-strongs, smaller denominator — not a regression, see 5.3). |
+| **`detection/config.py:137`'s `"bh_family": ("metric",)` is never read** | **Found 2026-09-29 (read-only verification, no code change).** The comment states the intended Benjamini-Hochberg family is per metric, pooled across all three dimensions. Grepped: this key is referenced nowhere else in the codebase — one hit, its own definition. The family the code actually applies is one level finer, **per (metric, dimension)**, set structurally by `orchestrator.py`'s `for dim in DIMENSIONS: ... validate_segments(m, dim, ...)` loop — each call runs its own independent BH correction (`validator.py:277-282`) over only that dimension's segments, never pooled with the other two. **Deliberately not wired in, not an oversight to fix casually**: pooling all three dimensions into one family before correcting would change the family size `n` in every q-value's `p_i * n / rank_i`, which would change verdicts and would need to be re-verified against the full M3 benchmark (currently 34/36) before shipping — exactly the same "a config change needs a re-run, not just an edit" discipline as every other threshold in this file. The comment-vs-code mismatch itself is a separate, code-only fix, tracked for its own commit — not bundled into this docs-only pass. |
 
 ---
 
