@@ -1469,7 +1469,7 @@ happens to be unusually far from its dimension's, could reproduce the same
 overcorrection. This is logged as a known, residual risk (Section 8), not
 claimed as closed.
 
-### 5.4 Held-out set (rule frozen 2026-09-29, dates not yet drawn)
+### 5.4 Held-out set (rule frozen 2026-09-29; dates frozen 2026-10-01 — see end of section)
 
 **Dev set = the existing 41 benchmark dates (Section 5.1).** All agent
 development — prompt iteration, tool debugging, any human judgment about
@@ -1514,6 +1514,39 @@ project (Sections 3.5, 3.11, 5.1).
 percentages** — the pool is small enough, once eligibility and no-reuse
 constraints are applied across 9 incidents, that a percentage would imply
 more precision than the sample size supports.
+
+**Held-out set (frozen 2026-10-01).** Note: the request that produced this
+freeze asked for it under a new "Section 5.2" — that number is already
+`### 5.2 Scoring rubric`, so this is appended here instead, to the section
+that already exists for exactly this purpose, rather than creating a
+second, colliding 5.2.
+
+- **Seed:** `20261001`. **k = 9** dates per incident (I3b excepted, which
+  has exactly one clean date by construction) — the search tried 9 first
+  and it was immediately feasible, so 8 and 7 were never needed.
+  **Total: 73 dates** (8×9 + 1).
+- **Method:** bipartite max-matching (hand-implemented Kuhn/DFS augmenting
+  paths, no new dependency), not greedy — each incident is 9 interchangeable
+  slots; edges run to every date that survived its own eligibility +
+  contamination filter; slot order is fixed, and each slot's candidate
+  order follows the single `numpy.random.default_rng(20261001)`-shuffled
+  date sequence, so the seed (not iteration order) decides which valid
+  dates are picked. Full detail and the contamination-rule quote are in
+  the file itself, not duplicated here.
+- **File:** `evaluation/heldout/heldout_dates.json`.
+  **SHA-256:** `82012176af32e9677f0a08af33243166b972c14adf15cfb11dc539f1e3ccfe54`.
+- **No-replacement rule:** held-out dates are never swapped after
+  freezing. If a held-out date later turns out to be awkward for any
+  reason, that is reported as-is, not fixed by re-drawing — the dev set
+  was re-screened repeatedly and the held-out set exists specifically so
+  at least one set in this project wasn't.
+- **The engine has not been run on these dates.** `evaluation/
+  heldout_select.py` calls `investigate()` only on real, uninjected data,
+  only to rebuild the screened pool and reproduce the eligibility/
+  contamination filters already measured by hand (2026-09-30) — never with
+  any incident's injector mechanism applied, and never scored. Both halves
+  of M5 (freeze the set; score the engine on it) are listed as separate
+  steps in Section 7 for exactly this reason.
 
 ---
 
