@@ -33,7 +33,7 @@ class Claim:
                       # the ledger itself never uses the literal word "within")
     evidence_ids: list[str]
     strength: str     # the ledger verdict string, carried through unchanged
-    basis: str | None = None  # added 2026-10-xx, PLAN.md 5.5's schema
+    basis: str | None = None  # added 2026-10-01, PLAN.md 5.5's schema
                               # amendment - needed for I3b's Score A check,
                               # not in 4.1's original 7-field schema
 
@@ -42,6 +42,15 @@ class Claim:
 class Answer:
     pattern: str   # "localized" | "broad" | "mix" | "none"
     claims: list[Claim] = field(default_factory=list)
+    # ^ ALL claims, uncapped, any (metric, dimension) - amended 2026-10-01
+    # (PLAN.md 5.5). Used ONLY by Score A: filter to a target (metric,
+    # dimension), take the first (already ranked by the arm's own
+    # ordering within that group).
+    primary: list[Claim] = field(default_factory=list)
+    # ^ ranked, capped at 3, channel-dimension only for the engine - the
+    # arm's actual asserted answer. Used by Score B and the C1 false-
+    # positive/untested-claim counts (PLAN.md 5.5's original definition,
+    # unchanged - this is "what was asserted", not "what could be cited").
     narrative: str = ""
 
 
@@ -62,22 +71,54 @@ def _entry_to_claim(entry) -> Claim:
     )
 
 
+def _is_qualifying(e) -> bool:
+    return (e.kind == "segment" and e.metric in FORCED_METRICS
+           and (e.verdict in _CONFIDENT or e.verdict == "material_untested"))
+
+
 def engine_answer(investigate_result: dict) -> Answer:
-    """PLAN.md 5.5's "engine + naive selection rule" - the engine's own
-    answer in the Section 4.1 schema, built only from `investigate()`'s
-    existing `ledger` and `factors` outputs. No new statistics, no new
-    thresholds."""
+    """PLAN.md 5.5, amended 2026-10-01 - builds BOTH `claims` and
+    `primary` from `investigate()`'s existing `ledger`/`factors` outputs
+    only. No new statistics, no new thresholds.
+
+    `claims`: every qualifying row in every forced (metric, dimension) -
+    not just channel - ranked by |contribution| WITHIN each (metric,
+    dimension) group. This is what Score A reads. The original version
+    only ever built channel-dimension, top-3-capped claims and used THAT
+    for Score A too, which conflated "what can localize the target" with
+    "what the naive rule asserts" - the direct cause of I5's by-
+    construction Score A failure (I5's target is device-dimension) and
+    3 of the 7 dev disagreements against evaluation/score.py's SCORERS
+    (the other 3 were the 3-claim cap dropping a qualifying row; the
+    7th, I3b, is a genuine rank disagreement, unaffected by this fix).
+
+    `primary`: the UNCHANGED naive selection rule from the original 5.5 -
+    channel-dimension only, one primary metric chosen by the revenue
+    factor table's log-space contribution, top-3 claims total. This is
+    the arm's actual asserted pattern/answer, used by Score B and by the
+    C1 false-positive/untested-claim counts - deliberately NOT re-tuned
+    after seeing the dev-date disagreements (PLAN.md 5.5): I4/I6 still
+    fail Score B by construction (never outputs broad/mix), and I5's
+    top-1/top-3 still fail by construction too (pattern is correct, but
+    the device-dimension target can never appear in a channel-only rule).
+    """
     ledger = investigate_result["ledger"]
     entries = ledger.entries
     factors = investigate_result["factors"]
 
-    qualifying = [
-        e for e in entries
-        if e.dimension == "channel" and e.kind == "segment" and e.metric in FORCED_METRICS
-        and (e.verdict in _CONFIDENT or e.verdict == "material_untested")
-    ]
-    if not qualifying:
-        return Answer(pattern="none", claims=[])
+    all_qualifying = [e for e in entries if _is_qualifying(e)]
+
+    groups: dict[tuple, list] = {}
+    for e in all_qualifying:
+        groups.setdefault((e.metric, e.dimension), []).append(e)
+    claims = []
+    for key in sorted(groups):
+        rows = sorted(groups[key], key=lambda e: -abs(e.contribution or 0))
+        claims.extend(_entry_to_claim(e) for e in rows)
+
+    channel_qualifying = [e for e in all_qualifying if e.dimension == "channel"]
+    if not channel_qualifying:
+        return Answer(pattern="none", claims=claims, primary=[])
 
     if factors is None or factors.empty:
         raise RuntimeError(
@@ -86,7 +127,7 @@ def engine_answer(investigate_result: dict) -> Answer:
             "when any metric fired or was forced successfully; this is a "
             "real inconsistency to investigate, not an expected edge case.")
 
-    metrics_with_rows = sorted({e.metric for e in qualifying}
+    metrics_with_rows = sorted({e.metric for e in channel_qualifying}
                                & set(factors.index[factors["contribution"].notna()]))
     if not metrics_with_rows:
         raise RuntimeError(
@@ -97,18 +138,18 @@ def engine_answer(investigate_result: dict) -> Answer:
     primary_metric = max(metrics_with_rows, key=lambda m: abs(factors.loc[m, "contribution"]))
 
     def rows_for(metric):
-        return sorted((e for e in qualifying if e.metric == metric),
+        return sorted((e for e in channel_qualifying if e.metric == metric),
                       key=lambda e: -abs(e.contribution or 0))
 
-    claims = [_entry_to_claim(e) for e in rows_for(primary_metric)]
+    primary = [_entry_to_claim(e) for e in rows_for(primary_metric)]
     other_metrics = sorted((m for m in metrics_with_rows if m != primary_metric),
                            key=lambda m: -abs(factors.loc[m, "contribution"]))
     for m in other_metrics:
         rows = rows_for(m)
         if rows:
-            claims.append(_entry_to_claim(rows[0]))
+            primary.append(_entry_to_claim(rows[0]))
 
-    return Answer(pattern="localized", claims=claims[:3])
+    return Answer(pattern="localized", claims=claims, primary=primary[:3])
 
 
 # --- checker (PLAN.md 4.1) ----------------------------------------------
@@ -116,24 +157,32 @@ def engine_answer(investigate_result: dict) -> Answer:
 def check_answer(answer: Answer, ledger) -> dict:
     """Every claim's evidence_ids must resolve to a real ledger entry, with
     matching verdict (`strength`) and `basis`. Rejected claims are counted
-    and reported, never silently dropped."""
+    and reported, never silently dropped. Checks BOTH `claims` (Score A's
+    uncapped evidence list) and `primary` (the asserted answer, Score B) -
+    both are ledger-built claim lists an arm could be held to."""
     by_id = {e.evidence_id: e for e in ledger.entries}
-    rejected = []
-    for claim in answer.claims:
-        for eid in claim.evidence_ids:
-            entry = by_id.get(eid)
-            if entry is None:
-                rejected.append({"claim": claim, "reason": f"no ledger entry {eid!r}"})
-                break
-            if entry.verdict != claim.strength:
-                rejected.append({"claim": claim, "reason":
-                    f"strength {claim.strength!r} != entry verdict {entry.verdict!r}"})
-                break
-            if entry.basis != claim.basis:
-                rejected.append({"claim": claim, "reason":
-                    f"basis {claim.basis!r} != entry basis {entry.basis!r}"})
-                break
-    return {"n_claims": len(answer.claims), "n_rejected": len(rejected), "rejected": rejected}
+
+    def _check(claim_list):
+        rejected = []
+        for claim in claim_list:
+            for eid in claim.evidence_ids:
+                entry = by_id.get(eid)
+                if entry is None:
+                    rejected.append({"claim": claim, "reason": f"no ledger entry {eid!r}"})
+                    break
+                if entry.verdict != claim.strength:
+                    rejected.append({"claim": claim, "reason":
+                        f"strength {claim.strength!r} != entry verdict {entry.verdict!r}"})
+                    break
+                if entry.basis != claim.basis:
+                    rejected.append({"claim": claim, "reason":
+                        f"basis {claim.basis!r} != entry basis {entry.basis!r}"})
+                    break
+        return rejected
+
+    rejected = _check(answer.claims) + _check(answer.primary)
+    n_claims = len(answer.claims) + len(answer.primary)
+    return {"n_claims": n_claims, "n_rejected": len(rejected), "rejected": rejected}
 
 
 # --- Score A --------------------------------------------------------------
@@ -205,6 +254,9 @@ def _claim_key(c: Claim) -> tuple:
 
 
 def score_b(answer: Answer, incident_id: str) -> dict:
+    """Unchanged since the 2026-10-01 amendment - reads `answer.primary`
+    (the arm's actual capped, asserted answer), never `answer.claims`
+    (Score A's uncapped evidence list). PLAN.md 5.5."""
     expect = dict(_CORRECT_B[incident_id])
     if incident_id == "I6":
         expect["metric"] = _i6_metric()
@@ -214,14 +266,14 @@ def score_b(answer: Answer, incident_id: str) -> dict:
 
     if incident_id in ("I1", "I2", "I3", "I3b", "I5"):
         cause = expect["causes"][0]
-        top1 = bool(answer.claims) and _claim_key(answer.claims[0]) == cause
-        top3 = any(_claim_key(c) == cause for c in answer.claims[:3])
+        top1 = bool(answer.primary) and _claim_key(answer.primary[0]) == cause
+        top3 = any(_claim_key(c) == cause for c in answer.primary[:3])
         result["top1_correct"] = pattern_correct and top1
         result["top3_correct"] = pattern_correct and top3
     elif incident_id == "I7":
         causes = set(expect["causes"])
-        top1 = bool(answer.claims) and _claim_key(answer.claims[0]) in causes
-        top3_set = {_claim_key(c) for c in answer.claims[:3]}
+        top1 = bool(answer.primary) and _claim_key(answer.primary[0]) in causes
+        top3_set = {_claim_key(c) for c in answer.primary[:3]}
         result["top1_correct"] = pattern_correct and top1
         result["top3_correct"] = pattern_correct and bool(top3_set & causes)
         result["both_in_top3"] = pattern_correct and causes.issubset(top3_set)
@@ -236,9 +288,11 @@ def score_b(answer: Answer, incident_id: str) -> dict:
 def c1_claim_counts(answer: Answer) -> dict:
     """PLAN.md 5.5: a confident (strong/plausible) claim on a C1 date is a
     false positive by definition; an untested claim is counted separately,
-    not folded into the false-positive count."""
-    false_positives = [c for c in answer.claims if c.strength in _CONFIDENT]
-    untested = [c for c in answer.claims if c.strength not in _CONFIDENT]
+    not folded into the false-positive count. Reads `answer.primary` - the
+    arm's actual asserted answer, not the uncapped `claims` evidence list
+    (which would inflate both counts with rows the arm never asserted)."""
+    false_positives = [c for c in answer.primary if c.strength in _CONFIDENT]
+    untested = [c for c in answer.primary if c.strength not in _CONFIDENT]
     return {"false_positives": len(false_positives), "untested_claims": len(untested)}
 
 
@@ -291,20 +345,13 @@ if __name__ == "__main__":
                 this_date_all_pass = all(sa.values())
                 if existing is not None and existing.passed is not None:
                     if this_date_all_pass != existing.passed:
-                        # Reason detection must look at the RAW qualifying
-                        # ledger rows, not the post-truncation answer.claims
-                        # - a metric can have a qualifying row that the
-                        # top-3 cap then drops, and checking only
-                        # answer.claims cannot tell that apart from "never
-                        # qualified at all" (found while writing this report;
-                        # the bug was in this diagnostic, not in
-                        # engine_answer/score_a themselves).
-                        raw_qualifying = [
-                            e for e in r["ledger"].entries
-                            if e.dimension == "channel" and e.kind == "segment"
-                            and e.metric in FORCED_METRICS
-                            and (e.verdict in _CONFIDENT or e.verdict == "material_untested")
-                        ]
+                        # 2026-10-01: score_a now reads answer.claims (the
+                        # uncapped, every-(metric,dimension) list), so the
+                        # device-exclusion and 3-claim-cap mechanisms that
+                        # explained 6 of the previous 7 disagreements no
+                        # longer apply - any remaining mismatch is diagnosed
+                        # by directly diffing the top candidate's fields
+                        # against the target.
                         reasons = []
                         for (metric, dimension, segment), passed in sa.items():
                             if passed:
@@ -312,26 +359,10 @@ if __name__ == "__main__":
                             candidates = [c for c in answer.claims
                                          if c.metric == metric and c.dimension == dimension]
                             if not candidates:
-                                raw_rows_this_metric = [e for e in raw_qualifying if e.metric == metric]
-                                if dimension != "channel":
-                                    reasons.append(
-                                        f"{metric}/{dimension}: engine_answer only ever "
-                                        f"builds channel-dimension claims (rule spec, 5.5) "
-                                        f"- a {dimension}-dimension target can never appear, "
-                                        f"by construction of the rule")
-                                elif raw_rows_this_metric:
-                                    reasons.append(
-                                        f"{metric}/{dimension}: had a qualifying ledger row "
-                                        f"(verdict={raw_rows_this_metric[0].verdict!r}) but it "
-                                        f"was squeezed out of the 3-claim cap by other "
-                                        f"metrics' rows (force=all-3-metrics ranks metrics by "
-                                        f"factor contribution, not by which one the incident "
-                                        f"actually injected into)")
-                                else:
-                                    reasons.append(
-                                        f"{metric}/{dimension}: no qualifying row at all "
-                                        f"for {segment} under force=all-3-metrics "
-                                        f"(answer.pattern={answer.pattern!r})")
+                                reasons.append(
+                                    f"{metric}/{dimension}: no qualifying claim at all for "
+                                    f"{segment} under force=all-3-metrics "
+                                    f"(answer.pattern={answer.pattern!r})")
                             else:
                                 top = candidates[0]
                                 diffs = []
@@ -340,16 +371,30 @@ if __name__ == "__main__":
                                 if top.kind != "within": diffs.append(f"kind={top.kind!r}")
                                 if top.strength not in _CONFIDENT and top.strength != "material_untested":
                                     diffs.append(f"strength={top.strength!r}")
-                                reasons.append(f"{metric}/{dimension}: top claim mismatch ({', '.join(diffs)})")
+                                if iid == "I3b" and top.basis != "ineligible_segment":
+                                    diffs.append(f"basis={top.basis!r}")
+                                reasons.append(f"{metric}/{dimension}: top claim is "
+                                              f"{top.segment!r} not {segment!r}" if top.segment != segment
+                                              else f"{metric}/{dimension}: top claim mismatch "
+                                                   f"({', '.join(diffs)})")
+                        if not reasons:
+                            # arm_neutral passed every target; existing failed
+                            # the incident's own, possibly stricter condition
+                            # (e.g. I5's absolute device-share floor, which
+                            # Score A's uniform rank+sign+verdict check does
+                            # not apply) - quote the existing scorer's own
+                            # measured detail rather than guess.
+                            reasons.append(
+                                f"arm_neutral's rank+sign+verdict check passed, but the "
+                                f"existing scorer's own (possibly stricter/different) "
+                                f"condition failed: {existing.detail}")
                         disagreements.append({
                             "incident": iid, "date": date,
                             "arm_neutral_score_a": this_date_all_pass,
                             "existing_scorer": existing.passed,
                             "answer_pattern": answer.pattern,
                             "n_claims": len(answer.claims),
-                            "reason": "; ".join(reasons) if reasons else
-                                     "arm_neutral passed, existing scorer failed - "
-                                     "forcing all 3 metrics likely changed ranking/rank order",
+                            "reason": "; ".join(reasons),
                         })
 
             if iid == "C1":
