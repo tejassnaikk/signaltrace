@@ -1626,15 +1626,65 @@ existing outputs, no new thresholds:**
    `|contribution|`, then the other qualifying metrics' own TOP row each,
    ranked by their factor contribution, up to 3 claims total.
 4. **The engine never outputs `broad` or `mix`.** It therefore fails I4's
-   and I6's Score B by construction (the two incidents whose correct
-   pattern is `broad`/`mix` — not I5, whose correct pattern is `localized`
-   and which the engine can in principle pass; the request that produced
-   this section named I5 here, which doesn't match its own Score B table
-   above, so I6 is used instead — flagged, not silently substituted). This
-   is the naive baseline the agent is measured against, not a claim about
-   the engine's diagnostic quality — Score A is the quality claim; Score
-   B's `broad`/`mix` failure is a known, structural property of a rule
-   that only ever looks at one dimension at a time.
+   and I6's Score B `pattern` by construction (the two incidents whose
+   correct pattern is `broad`/`mix`). **Amended 2026-10-01 — I5's top-1/
+   top-3 also fail by construction**, for a different reason: I5's
+   `pattern` IS correctly `localized`, but its target is device-dimension
+   and `primary` (the rule below) is channel-only by design, so the
+   target can never appear among `primary`'s ranked claims even though
+   the pattern itself is right. (The request that produced this section
+   originally named I5 among the `broad`/`mix` pattern failures, which
+   doesn't match this section's own Score B table — I6 was used instead,
+   flagged, not silently substituted; this amendment is the corrected,
+   complete list of by-construction Score B failures, not a reversal of
+   that earlier correction.) None of this is a claim about the engine's
+   diagnostic quality — Score A is the quality claim; Score B's
+   structural failures are a known property of a rule that only ever
+   looks at one dimension (channel) at a time.
+
+**Amendment, 2026-10-01 — Score A fixed on dev, before any held-out
+run.** Score A was being scored from `primary` (the engine answer rule's
+capped, channel-only output above) instead of from the full evidence the
+arm actually has available — conflating "what can localize the target"
+with "what the naive rule happens to assert." On the 41 dev dates, this
+traced to **6 of 7** disagreements against `evaluation/score.py`'s
+existing, independent `SCORERS`: I5's 3 dates (device-dimension target,
+channel-only rule — structurally can never appear) and 3 more (I1
+2017-05-04, I7 2017-06-28, I7 2017-02-01 — the target metric had a
+qualifying row that the 3-claim cap then dropped, because forcing all
+three metrics ranks by factor contribution, not by which metric the
+incident actually injected into). The 7th (I3b 2017-01-23) is a genuine
+rank disagreement, unrelated to this bug, and stays as-is (see below).
+
+**Fixed by splitting the answer into two fields, used for two different
+questions, for BOTH arms identically:**
+- **`claims`** — every qualifying row in every forced `(metric,
+  dimension)`, not just channel, ranked by `|contribution|` **within**
+  each `(metric, dimension)` group. **Score A reads `claims`**: filter to
+  the target `(metric, dimension)`, take the first (already ranked by the
+  arm's own ordering within that group). Pass conditions above are
+  otherwise unchanged.
+- **`primary`** — the engine answer rule exactly as specified above,
+  unchanged: channel-dimension only, one primary metric, capped at 3.
+  **Score B still reads `primary`** — Score B is checking what the arm
+  actually asserted as ITS answer, which is a different question from
+  Score A's "can the evidence localize the target," and is correctly
+  unaffected by this fix.
+
+**The baseline rule (`primary`) is deliberately NOT amended after seeing
+the dev-date disagreements** — tuning it now, having already seen which
+dev dates it gets wrong, would make dev-date Score B numbers meaningless
+as anything other than a fitted result. I4/I6's pattern failures and I5's
+top-1/top-3 failures (point 4 above) stand as pre-registered, known,
+structural properties of the naive rule, not bugs to close before the
+held-out run.
+
+**I3b's 0/1 Score A is a genuine rank result, kept as-is** — on
+2017-01-23, some other ineligible channel segment's `|contribution|`
+exceeds Direct's that day, so it (not Direct) is the top-ranked claim in
+the `(aov, channel)` group; this has nothing to do with the `claims`/
+`primary` bug above and is not evidence of a remaining implementation
+error.
 
 **False positives, both arms, C1 dates:** a claim with `strength` in
 `{strong, plausible}` is a false positive by definition (C1 has no
