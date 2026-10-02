@@ -1548,6 +1548,117 @@ second, colliding 5.2.
   of M5 (freeze the set; score the engine on it) are listed as separate
   steps in Section 7 for exactly this reason.
 
+### 5.5 Arm-neutral scoring (pre-registered before engine runs on held-out)
+
+Both arms (deterministic engine, agent) are scored by the SAME two rubrics
+below, implemented once in `evaluation/arm_neutral.py`, independent of
+`evaluation/score.py`'s existing per-incident pass conditions (Section
+5.2) — that file is not imported or modified here, by instruction, so the
+two scorers can disagree and the disagreement is itself informative rather
+than hidden by shared code.
+
+**Vocabulary note, stated once:** the ledger's `kind` field only ever
+takes the values `segment` / `mix` / `concentration` (grepped, confirmed —
+there is no literal `"within"` anywhere in the data model). A claim's
+`kind="within"` (Section 4.1's answer schema) maps onto a ledger entry
+with `kind="segment"` — a per-segment row, as distinguished from the
+whole-dimension `kind="mix"` row. `kind="mix"` in a claim maps onto
+`kind="mix"` in the ledger directly, unchanged.
+
+**Schema amendment, found necessary while implementing Score A, not
+anticipated in 4.1:** I3b's pass condition needs `basis`, which 4.1's
+7-field claim schema (`metric, dimension, segment, direction, kind,
+evidence_ids, strength`) does not carry, and `score_a`'s signature
+(`score_a(answer, incident_id)`) has no ledger to resolve it from
+separately. **`Claim` gains an eighth field, `basis`**, populated directly
+from the ledger entry a claim is built from (the engine always has this
+for free; the agent's `test_dimension` tool already returns `basis` per
+row, Section 4.1, so this costs the agent arm nothing either).
+
+**Score A — within-dimension localization.** For incidents with a single
+named target segment:
+
+| incident | target (metric, dimension, segment) |
+|---|---|
+| I1 | sessions, channel, Organic Search |
+| I2 | conversion_rate, channel, Referral |
+| I3 | aov, channel, Direct |
+| I3b | aov, channel, Direct |
+| I5 | conversion_rate, device, desktop |
+| I7 | **both** — sessions/channel/Organic Search AND conversion_rate/channel/Referral, scored separately |
+
+Pass (per target): the arm's TOP-RANKED claim within that exact
+(metric, dimension) has `segment` = the target, `direction="down"`,
+`kind="within"`, and `strength` in `{strong, plausible}` — except AOV
+(I3, I3b), where `strength` must be `material_untested` (AOV's verdict is
+structurally never anything else, PLAN.md 3.7). **I3b additionally
+requires `basis="ineligible_segment"`** (not `decomposition_only` — the
+whole point of I3b is that Direct is BOTH ineligible and untestable on
+this date, and ineligible must win, matching `Ledger.record`'s own
+precedence). **I4, I6, C1 have no Score A** — none of them have a single
+named target segment to localize to.
+
+**Score B — root-cause identification.** Each arm returns `pattern in
+{localized, broad, mix, none}` plus ranked claims.
+
+| incident | correct `pattern` | correct cause |
+|---|---|---|
+| I1, I2, I3, I3b, I5 | `localized` | the Score A target above |
+| I7 | `localized` | top-1 correct if it matches **either** target; **separately** checked: both targets appear somewhere in the top-3 |
+| I4 | `broad` | metric = `aov` |
+| I6 | `mix` | dimension = `device`, metric = `conversion_rate` — quoted directly from `evaluation/ground_truth/I6.json`'s `"forced_metrics": ["conversion_rate"]` (single element, unambiguous; the loader asserts length 1 and fails loudly otherwise) |
+| C1 | `none` | — |
+
+Reported as top-1 and top-3 accuracy (counts, not held-out — see below).
+
+**Engine answer rule ("engine + naive selection rule"), built only from
+existing outputs, no new thresholds:**
+1. A qualifying row = a channel-dimension, `kind="within"` row with
+   `strength` in `{strong, plausible}`, OR `strength="material_untested"`
+   (any `basis`).
+2. If no qualifying row exists for any of the three forced metrics:
+   `pattern="none"`, no claims.
+3. Otherwise `pattern="localized"`. Primary metric = the revenue factor
+   with the largest **absolute log-space contribution** (`investigate()`'s
+   own `factors` table, already log-space by construction, Section 2 —
+   no new computation) among metrics that have at least one qualifying
+   row. Claims = that metric's qualifying channel rows ranked by
+   `|contribution|`, then the other qualifying metrics' own TOP row each,
+   ranked by their factor contribution, up to 3 claims total.
+4. **The engine never outputs `broad` or `mix`.** It therefore fails I4's
+   and I6's Score B by construction (the two incidents whose correct
+   pattern is `broad`/`mix` — not I5, whose correct pattern is `localized`
+   and which the engine can in principle pass; the request that produced
+   this section named I5 here, which doesn't match its own Score B table
+   above, so I6 is used instead — flagged, not silently substituted). This
+   is the naive baseline the agent is measured against, not a claim about
+   the engine's diagnostic quality — Score A is the quality claim; Score
+   B's `broad`/`mix` failure is a known, structural property of a rule
+   that only ever looks at one dimension at a time.
+
+**False positives, both arms, C1 dates:** a claim with `strength` in
+`{strong, plausible}` is a false positive by definition (C1 has no
+injection). Claims with `strength="material_untested"` (or any other
+non-confident value) are counted and reported **separately**, not folded
+into the false-positive count — an untested claim isn't a confident wrong
+answer, it's the agent/engine correctly declining to assert one.
+
+**Agent nondeterminism (forward-looking — no agent exists yet):** the
+agent runs 3 times per date (Section 4.1). Primary numbers are counts over
+date × run, not per-date; per-date agreement across the 3 runs is reported
+alongside as a separate, secondary number.
+
+**Checker:** Section 4.1's checker (`evaluation/arm_neutral.py`'s
+`check_answer`) runs on both arms' answers unchanged. The engine's claims
+are built directly from ledger entries 1:1, so they pass trivially by
+construction — stated here as the expected result, verified in the
+commit that adds the code.
+
+**Headline numbers are held-out only, reported as counts** — same reason
+as Section 5.4. The 41-dev-date numbers reported when this scorer is
+built are a code-correctness check (does the scorer run, does the checker
+pass, do the two independent scorers roughly agree), not a result.
+
 ---
 
 ## 6. Repository structure — matches what exists
