@@ -61,7 +61,31 @@ def _detector_fired(r: dict, forced_metrics: list[str]) -> dict[str, bool]:
     return out
 
 
+# A date whose forced metric's segment-level window has fewer than `weeks`
+# observed same-weekday lags (metrics/segments.py's segment_expectation)
+# produces a completely empty investigate() `results` frame - no "metric"
+# column at all, not just zero matching rows. Found 2026-10-04 running the
+# M5 held-out set: one date in the whole 281-day detection range hits this
+# (2016-10-26, the only Wednesday whose 12th same-weekday lag lands exactly
+# on the excluded 2016-08-03 data-gap date - confirmed by direct
+# recomputation, not assumed; weeks=4/8 metrics are never affected). This
+# is a genuine engine limitation (a silent empty result, not a crash,
+# wherever nothing downstream asserts on it), logged in PLAN.md 8 as a
+# post-M7 engine improvement - NOT fixed here, since the engine is frozen
+# (tag engine-frozen-m5) for the M5 held-out run. This fix only stops
+# evaluation/score.py's OWN scorers from crashing on that empty frame;
+# it changes no detection/investigation/metrics code.
+_NO_RESULTS_DETAIL = "no_results: insufficient trailing history"
+
+
+def _results_empty(r: dict) -> bool:
+    df = r["results"]
+    return df.empty or "metric" not in df.columns
+
+
 def _dim_segments(df: pd.DataFrame, metric: str, dimension: str) -> pd.DataFrame:
+    if df.empty or "metric" not in df.columns:
+        return df.iloc[0:0]
     return df[(df["metric"] == metric) & (df["dimension"] == dimension)
               & (df["kind"] == "segment")].copy()
 
@@ -95,6 +119,8 @@ def _rank_sign_verdict(df: pd.DataFrame, metric: str, segment: str,
 
 def score_I1(gt: dict, date: str) -> DateResult:
     r = _run("I1", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     passed, meas = _rank_sign_verdict(r["results"], "sessions", gt["pass_condition"]["segment"], ("strong",))
     meas["detector_fired"] = _detector_fired(r, gt["forced_metrics"])
     return DateResult(date, passed, f"{meas}", meas)
@@ -102,6 +128,8 @@ def score_I1(gt: dict, date: str) -> DateResult:
 
 def score_I2(gt: dict, date: str) -> DateResult:
     r = _run("I2", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     passed, meas = _rank_sign_verdict(r["results"], "conversion_rate", gt["pass_condition"]["segment"],
                                       PLAUSIBLE_OR_BETTER)
     meas["detector_fired"] = _detector_fired(r, gt["forced_metrics"])
@@ -110,6 +138,8 @@ def score_I2(gt: dict, date: str) -> DateResult:
 
 def score_I3(gt: dict, date: str) -> DateResult:
     r = _run("I3", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     seg_rows = _dim_segments(df, "aov", "channel")
     top = _top_magnitude(seg_rows)
@@ -131,6 +161,8 @@ def score_I3(gt: dict, date: str) -> DateResult:
 
 def score_I3b(gt: dict, date: str) -> DateResult:
     r = _run("I3b", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     seg_rows = _dim_segments(df, "aov", "channel")
     target = seg_rows[seg_rows["segment"] == gt["pass_condition"]["segment"]]
@@ -148,6 +180,8 @@ def score_I3b(gt: dict, date: str) -> DateResult:
 
 def score_I4(gt: dict, date: str) -> DateResult:
     r = _run("I4", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     ref = gt["pass_condition"]["reference_distributions"]
     passed_all, meas = True, {}
@@ -170,6 +204,8 @@ def score_I4(gt: dict, date: str) -> DateResult:
 
 def score_I5(gt: dict, date: str) -> DateResult:
     r = _run("I5", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     pc = gt["pass_condition"]
     meas = {}
@@ -200,6 +236,8 @@ def score_I5(gt: dict, date: str) -> DateResult:
 
 def score_I6(gt: dict, date: str) -> DateResult:
     r = _run("I6", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     dev = _dim_segments(df, "conversion_rate", "device")
     mix = df[(df["metric"] == "conversion_rate") & (df["dimension"] == "device") & (df["kind"] == "mix")]
@@ -218,6 +256,8 @@ def score_I6(gt: dict, date: str) -> DateResult:
 
 def score_I7(gt: dict, date: str) -> DateResult:
     r = _run("I7", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     sess_pass, sess_meas = _rank_sign_verdict(df, "sessions", gt["pass_condition"]["sessions_channel"]["segment"],
                                               ("strong",))
@@ -241,6 +281,8 @@ def score_C1(gt: dict, date: str) -> DateResult:
     in the denominator would understate the rate among pairs that actually
     COULD have come back significant."""
     r = _run("C1", date, gt["forced_metrics"])
+    if _results_empty(r):
+        return DateResult(date, False, _NO_RESULTS_DETAIL)
     df = r["results"]
     seg = df[df["kind"] == "segment"].copy()
     material = seg[seg["testable"] & seg["eligible"]
