@@ -772,9 +772,12 @@ corrupt the exact statistic it exists to expose.
 
 **Forbidden to the agent:** raw SQL; any import from `evaluation/` or
 `ground_truth/`; the `incident_id` parameter; `Ledger.record`; computing
-shares, contributions, or p-values itself. All computation happens inside
-the engine — the agent only ever reads what `test_dimension` /
-`get_factor_decomposition` return.
+shares, contributions, or p-values itself; **reading
+`evaluation/results/heldout_engine.json`** (added 2026-10-04, Section 5.6
+— the frozen engine's own held-out answers; the agent must not see them,
+by the same logic that it must not see `evaluation/ground_truth/`). All
+computation happens inside the engine — the agent only ever reads what
+`test_dimension` / `get_factor_decomposition` return.
 
 **Final answer schema, identical for both arms:**
 - `pattern` in `{localized, broad, mix, none}`
@@ -1708,6 +1711,85 @@ commit that adds the code.
 as Section 5.4. The 41-dev-date numbers reported when this scorer is
 built are a code-correctness check (does the scorer run, does the checker
 pass, do the two independent scorers roughly agree), not a result.
+
+### 5.6 Held-out engine results (M5)
+
+Engine frozen at tag `engine-frozen-m5`. **The first held-out attempt
+aborted on a scorer crash (`evaluation/score.py`'s `_dim_segments`,
+`KeyError: 'metric'`) before any held-out result was written or viewed** —
+fixed in a dedicated commit (`1e5f19f`, "score.py: guard empty
+investigate() results") that touches only `evaluation/score.py`, verified
+to change no `detection`/`investigation`/`metrics` code and to leave every
+dev-date number (SCORERS 34/36; `arm_neutral`'s Score A/B/C1 counts)
+byte-identical to the pre-fix run, before the held-out run was reattempted.
+
+**Root cause, documented as an engine limitation, not fixed (engine is
+frozen):** `metrics/segments.py`'s `segment_expectation` correctly masks a
+segment's expectation to NaN when any of its `weeks` same-weekday lags is
+missing — but does so **silently**, with no "insufficient history" signal
+that reaches the caller. Across the full 281-day detection range this
+affects exactly one date, for `weeks=12` metrics (sessions, aov) only: the
+single Wednesday whose 12th lag lands exactly on the excluded 2016-08-03
+data-gap date. One held-out date (I1) hit it. A non-silent "insufficient
+history" result (rather than a bare empty frame) is noted here as a
+**post-M7 engine improvement** — not done now, because the engine is
+frozen for this held-out run and must stay that way until M7's two-arm
+comparison is complete.
+
+**Score A (held-out):**
+
+| target | pass |
+|---|---|
+| I1 (sessions, channel, Organic Search) | 6/9 |
+| I2 (conversion_rate, channel, Referral) | 2/9 |
+| I3 (aov, channel, Direct) | 2/9 |
+| I3b (aov, channel, Direct) | 0/1 |
+| I5 (conversion_rate, device, desktop) | 8/9 |
+| I7 (sessions, channel, Organic Search) | 6/9 |
+| I7 (conversion_rate, channel, Referral) | 1/9 |
+
+**Existing `SCORERS` (held-out), next to the dev pre-selection rates
+(Section 5.2 — the diagnostic-accuracy-relevant number, since held-out
+dates were never screened for passing, Section 5.4):**
+
+| incident | held-out | dev pre-selection |
+|---|---|---|
+| I1 | 6/9 | 24/58 (41.4%) |
+| I2 | 2/9 | 19/105 (18.1%) |
+| I3 | 2/9 | 36/100 (36.0%) |
+| I3b | 1/1 | — |
+| I4 | 9/9 | — (not re-screened) |
+| I5 | 4/9 | — (not re-screened) |
+| I6 | 9/9 | — (not re-screened) |
+| I7 | 0/9 | 6/104 (5.8%) |
+
+**Score B (pattern / top-1 / top-3):**
+
+| incident | pattern | top-1 | top-3 |
+|---|---|---|---|
+| I1 | 8/9 | 3/9 | 4/9 |
+| I2 | 9/9 | 1/9 | 1/9 |
+| I3 | 9/9 | 1/9 | 4/9 |
+| I3b | 1/1 | 0/1 | 0/1 |
+| I4 | 0/9 | 0/9 | 0/9 |
+| I5 | 9/9 | 0/9 | 0/9 |
+| I6 | 0/9 | 0/9 | 0/9 |
+| I7 | 9/9 | 2/9 | 4/9 |
+| C1 | 0/9 | 0/9 | 0/9 |
+
+I7 both-targets-in-top-3: 0/9.
+
+**C1:** false_positives = 1, untested_claims = 26 (of 27 total `primary`
+claims across the 9 held-out C1 dates).
+
+**Checker:** 1171 claims checked (`claims` + `primary`, both arms-eligible
+lists), **0 rejections**.
+
+**`no_results` (the Section 5.1 diagnosis above, counted per incident, no
+dates revealed):** I1 = 1, every other incident = 0.
+
+No interpretation beyond the numbers above - M7 is where the held-out
+engine result gets compared against the agent and written up.
 
 ---
 
