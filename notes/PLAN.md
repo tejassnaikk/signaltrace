@@ -816,6 +816,34 @@ stored as one constant, and written into every run's metadata. Temperature
 tool-use loop via the `ollama` Python package; no paid API anywhere in the
 project. **LangGraph is dropped for now** (see the pointer above).
 
+**Pinned 2026-10-04 (`agent/config.py`):** model tag `qwen3:8b`, full
+digest `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`,
+Ollama server version `0.35.1`. `agent/config.py` re-verifies this digest
+against the running server at import time and fails loudly on any
+mismatch — a silently re-pulled or swapped model must never go unnoticed
+mid-project. `think` (Qwen3's hybrid reasoning mode) is left `False` for
+now — a real design choice, deliberately not decided here; it gets
+decided on dev dates only, same as everything else model-behavior-related
+(never on held-out).
+
+**Smoke test (`agent/smoke_test.py`), run once via the `ollama` Python
+package, not curl:** same scenario as an earlier standalone curl check
+(2017-02-06, device dimension, conversion_rate) — prompt text re-authored
+for this script, not a byte-for-byte reproduction, since this session has
+no record of the original wording. Result: exactly one correct tool call
+(`test_dimension(metric="conversion_rate", dimension="device")`), 20.4
+tok/s, 0.0s load (model was already warm from the prior curl check, within
+`OLLAMA_KEEP_ALIVE=2h` — not a fresh cold-load measurement; the earlier
+curl test's 200s cold load from the external SSD is the number that
+matters for a worst-case first-call estimate).
+
+**The agent runner must be resumable.** Each completed (date, run) pair
+saved immediately, not batched — a restart must skip already-finished
+runs, never recompute them. Not optional: the full evaluation (41 dev
+dates × up to 3 runs, eventually the held-out set too) is estimated at
+12–17 hours on this machine, long enough that an unresumable run that
+dies partway through is a real, not theoretical, risk.
+
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
@@ -1816,7 +1844,8 @@ signaltrace/
 │   ├── validator.py              (contribution-first, BH, seven verdicts)
 │   ├── evidence.py               (append-only ledger)
 │   └── orchestrator.py           (end-to-end, no LLM)
-├── agent/            [not started — Phase 2]
+├── agent/            [M6 kickoff — config.py (frozen model pin), smoke_test.py;
+│                      tool layer and agent loop not started]
 ├── evaluation/        [built — injector.py, score.py, ground_truth/*.json (M3 benchmark, 34/36)]
 ├── app/                [built — dashboard.py (M4, commit 4b7a950)]
 ├── notes/
