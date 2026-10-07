@@ -844,6 +844,32 @@ dates × up to 3 runs, eventually the held-out set too) is estimated at
 12–17 hours on this machine, long enough that an unresumable run that
 dies partway through is a real, not theoretical, risk.
 
+**[Amended 2026-10-07: tool layer design decisions, M6 Part 1]**
+
+- **Date-bound tools (no date argument).** The three tools are methods on
+  a `ToolSession` constructed with `(date, con)`.  None of them accept a
+  date parameter, so the agent cannot query a different date than the one
+  it was given.
+
+- **Single investigate() call, cached slices.** `ToolSession.__init__`
+  runs the frozen `investigate()` once with
+  `force=["sessions","conversion_rate","aov"]` and caches the result.
+  `test_dimension(metric, dimension)` returns a slice of that cache —
+  tool outputs therefore equal engine outputs by construction and the
+  engine is never touched again.  The frozen engine tag `engine-frozen-m5`
+  guarantees no drift.
+
+- **Harness Ledger records only revealed rows.** The fresh `Ledger` inside
+  `ToolSession` accumulates entries only as `test_dimension` is called.
+  `check_answer()` therefore accepts only evidence the agent actually saw;
+  it rejects any claim whose `evidence_id` traces to a (metric, dimension)
+  pair that was never revealed in this session.
+
+- **Model pinning and smoke test pending.** `agent/config.py` and
+  `agent/smoke_test.py` require Ollama and the local model on the external
+  SSD, both currently disconnected.  They are not modified here and will
+  be re-validated when the SSD is reconnected.
+
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
@@ -1844,8 +1870,15 @@ signaltrace/
 │   ├── validator.py              (contribution-first, BH, seven verdicts)
 │   ├── evidence.py               (append-only ledger)
 │   └── orchestrator.py           (end-to-end, no LLM)
-├── agent/            [M6 kickoff — config.py (frozen model pin), smoke_test.py;
-│                      tool layer and agent loop not started]
+├── agent/            [M6 Part 1 — config.py (frozen model pin), smoke_test.py,
+│   ├── config.py      tools.py (date-bound ToolSession, 3 tools, harness Ledger)]
+│   ├── smoke_test.py  [pending SSD reconnect]
+│   └── tools.py       [M6 Part 1 — ToolSession: get_factor_decomposition,
+│                        test_dimension, get_ledger_summary; 127/127 tests pass]
+├── tests/
+│   └── test_agent_tools.py  [M6 Part 1 — 127 tests: equivalence (a/b), ledger
+│                              scoping (c), checker rejection (d), invalid inputs (e),
+│                              idempotency (f), grep (g); all on 41 dev dates]
 ├── evaluation/        [built — injector.py, score.py, ground_truth/*.json (M3 benchmark, 34/36)]
 ├── app/                [built — dashboard.py (M4, commit 4b7a950)]
 ├── notes/
