@@ -1,40 +1,97 @@
-# Resume point — 2026-08-25
+# SignalTrace — resume point (2026-10-07)
 
-## Shell
-    cd ~/signaltrace && source .venv/bin/activate
+## What this project is
 
-The venv does NOT auto-activate in a restored terminal session. Check for
-`(.venv)` in the prompt before running anything.
+A deterministic KPI root-cause engine plus an evidence-constrained LLM agent
+that operates it.  The engine detects revenue anomalies, decomposes them into
+factor contributions (sessions × conversion_rate × aov), and validates every
+conclusion against a significance-tested evidence ledger.  The agent calls
+three tools (get_factor_decomposition, test_dimension, submit_answer) and
+never performs analysis itself — it only cites what the engine revealed.
+See PLAN.md for architecture, design decisions, and evaluation protocol.
 
-## Where we are
-M1, M2, M3 complete. The deterministic engine runs end to end:
+---
 
-    python investigation/orchestrator.py 2016-12-26 2017-03-04 2017-04-27
+## Milestone status
 
-Warnings about all-NaN slices are expected (segments with too few lags).
+| Milestone | Commit | Notes |
+|---|---|---|
+| M1 | `d1313e7` | GA360 ingest, metric series, baseline characterization |
+| M2 | `0d1e33a` | Component detection, concentration check, separability gate |
+| M3 | `43f231d` | Benchmark incidents (34/36 pass), holiday screening |
+| M4 | `4b7a950` | Streamlit dashboard |
+| M5 | `5d0e956` | Engine evaluated on held-out set; tagged `engine-frozen-m5` and `heldout-frozen` |
+| M6 | `eabbd2f` | Agent tool layer + loop + resumable runner; fake-model tested (142/142 tests) |
 
-## Next
-1. (optional) write M3 findings into notes/
-2. M4 = Streamlit dashboard
-3. M5 = stop-safe point: Phase 1 is complete and presentable on its own
+---
 
-## Do not relitigate
-- Seasonal module was deliberately deleted, not forgotten. Its thresholds were
-  invented and unvalidatable with 12 months of data. See notes/baseline.md.
-- AOV segments cannot be significance-tested. The daily export lacks
-  within-segment order variance. They are decomposition_only by design.
-- Ranking is per-dimension, never pooled. Pooling summed to 287%.
+## Frozen boundaries
 
-## Open limitations (documented, not bugs)
-- Cannot distinguish seasonality from incidents
-- Device and country dimensions are near-vacuous (one segment IS the business)
-- Judgment-call numbers: materiality 0.05, high_contribution 0.30,
-  q 0.05/0.10, concentration note 0.40, concentration check max/median
-  order ratio 20x (reasoned, not measured: sits between thin days ~1x and
-  the marginal whale 2016-11-26 at 45x), eligibility window 84 trailing days
-  (reasoned to match the longest detection window, not separately measured)
-- When a segment is BOTH ineligible (too little volume) AND has no valid
-  test in principle (AOV's mean-vs-proportion issue): basis is reported as
-  `ineligible_segment`, not `decomposition_only`. Judgment call, not
-  measured - eligibility treated as the more fundamental blocker since even
-  a valid test couldn't run on too little data.
+**Engine frozen at `engine-frozen-m5`.**  Do not modify:
+- `detection/`, `investigation/`, `metrics/`
+
+**Held-out data frozen at `heldout-frozen`.**  Do not read:
+- `evaluation/heldout/`
+- `evaluation/results/heldout_engine.json`
+
+Violation of either boundary invalidates the benchmark.
+
+---
+
+## What is forbidden during agent development
+
+- Reading or reasoning about held-out ground-truth files (above)
+- Selecting or tuning anything based on held-out outcomes
+- Running `--split heldout` before tagging `agent-frozen`
+- Changing detection/, investigation/, or metrics/ for any reason
+- Evaluating on a subset of dev dates (--limit runs are for debugging only,
+  never count toward prompt selection — see PLAN.md Section 4.2)
+
+---
+
+## Starting Ollama (external SSD required)
+
+The local model lives on the external SSD.  Use the shell functions defined in
+`~/.zshrc` (or wherever they were added):
+
+```
+ollama-start    # mounts SSD if needed, starts the Ollama server
+ollama-stop     # stops the server
+```
+
+The server must be running before any real-model step.  Confirm with:
+
+```
+ollama list
+```
+
+When the SSD is disconnected, the server cannot start.  All agent code is
+safe to import and test with FakeClient — nothing connects at import time.
+
+---
+
+## Next pending steps (in order)
+
+1. **Reconnect SSD** and run `ollama-start`.
+
+2. **Pin model digest** — edit `agent/config.py` to record the exact
+   `sha256:…` digest of the running model (guards against silent updates).
+   Run `agent/smoke_test.py` to confirm the model responds and tool-calling
+   works end-to-end.
+
+3. **Plumbing run** — `python -m evaluation.run_agent --split dev --limit 3`
+   to verify the runner produces valid JSONL, scores compute, and no import
+   errors surface before committing to a full overnight run.
+
+4. **Dev iteration protocol** (PLAN.md Section 4.2) — up to 5 prompt
+   versions (v0–v4), each evaluated on all 41 dev dates × 3 runs ≈ 123 runs
+   (~4–6 hours).  Plan overnight runs.  Selection rule: highest dev Score B
+   top-1 count; tie-break fewer rejected claims, then fewer failed runs.
+
+5. **think=False vs think=True comparison** on the winning prompt, same full
+   dev run.
+
+6. **Freeze and held-out** — commit and tag `agent-frozen`, then run once:
+   `python -m evaluation.run_agent --split heldout --i-confirm-heldout`
+
+See PLAN.md Sections 4.1 and 4.2 for full details.
