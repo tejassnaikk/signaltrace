@@ -901,6 +901,28 @@ dies partway through is a real, not theoretical, risk.
   agent-frozen` on the current HEAD.  Neither condition alone suffices.
   The dev split has no guard and can be run freely during development.
 
+**[Amended 2026-10-07: direction field, strength "exact", prompt v0 corrections]**
+
+- **direction field in test_dimension rows (one shared definition).**
+  Every row returned by `test_dimension` now carries a `direction` field
+  ("up"/"down") computed by `_row_direction(e.actual, e.expected)` in
+  `agent/tools.py`.  The loop's claim checker imports and calls the same
+  function, so the tool output and the validation rule are guaranteed to
+  stay consistent — the agent can always satisfy the direction check by
+  copying the field directly from the row.
+
+- **strength "exact" for arithmetic mix rows.**  `submit_answer`'s strength
+  enum now includes "exact", which maps to verdict "arithmetic".  Before
+  this change, mix rows (verdict="arithmetic", kind="mix") could not be
+  cited in any claim because no valid strength existed — pattern="mix"
+  answers were correct but unclaimable by construction.  "exact" fixes that.
+
+- **prompt v0 kind field corrected: "segment" not "within".**
+  `test_dimension` returns `e.kind` directly from the engine, which is
+  "segment" for within-segment rows.  The "within" translation only happens
+  in the checker's output (accepted claim dict).  The prompt was corrected
+  to match what the model actually sees in the tool output.
+
 ---
 
 ## 4.2 Dev iteration protocol (pre-registered before any real-model run)

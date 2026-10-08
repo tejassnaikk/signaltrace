@@ -36,6 +36,22 @@ _SCORE_DATES = [
     ("I5", "2016-11-02"),
 ]
 
+# All 41 dev dates across all incidents — used for direction and exact-strength tests
+_INCIDENTS = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
+_ALL_DEV_DATES = [
+    (iid, str(date))
+    for iid in _INCIDENTS
+    for date in load_ground_truth(iid)["dates"]
+]
+
+# Verdict → agent strength word for ALL claimable verdicts
+_VERDICT_TO_STRENGTH = {
+    "strong": "strong",
+    "plausible": "plausible",
+    "material_untested": "untested",
+    "arithmetic": "exact",
+}
+
 _STRENGTH_MAP = {
     "strong": "strong",
     "plausible": "plausible",
@@ -378,6 +394,57 @@ def test_c_budget_fails_c1_scoring() -> None:
     con.close()
 
 
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_direction_field_never_rejected(iid: str, date: str) -> None:
+    """Copying row['direction'] into a claim is never rejected for direction.
+
+    Parametrized over all 41 dev dates.  Only claimable verdicts are
+    submitted (strong/plausible/material_untested/arithmetic); the checker
+    must accept all of them on direction without raising a direction-mismatch
+    rejection.  Uses the shared _row_direction definition from agent.tools.
+    """
+    from agent.tools import _row_direction  # confirm same function as checker
+
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    # Pre-populate all 9 pairs and collect claimable rows
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    for m, d in all_pairs:
+        session.test_dimension(m, d)
+
+    claims_args = []
+    for e in session._harness_ledger().entries:
+        strength = _VERDICT_TO_STRENGTH.get(e.verdict)
+        if strength is None:
+            continue
+        claims_args.append({
+            "entry_id": e.evidence_id,
+            "direction": _row_direction(e.actual, e.expected),
+            "strength": strength,
+        })
+
+    if not claims_args:
+        pytest.skip(f"no claimable rows on {iid}/{date}")
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {"pattern": "localized", "claims": claims_args, "narrative": "direction test"},
+        }]
+    })
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok", f"{iid}/{date}: {result['status']}"
+    dir_rejections = [r for r in result["rejected"] if "direction" in r.get("reason", "")]
+    assert dir_rejections == [], f"{iid}/{date}: direction rejections: {dir_rejections}"
+    con.close()
+
+
 def test_c_exhaustive_path_with_two_repairs_ok() -> None:
     """Exhaustive path (11 regular calls) + 2 malformed submits + 1 valid = 14 total.
 
@@ -405,6 +472,83 @@ def test_c_exhaustive_path_with_two_repairs_ok() -> None:
     assert result["status"] == "ok", (
         f"exhaustive + 2 repairs should fit budget=14, got {result['status']!r}"
     )
+    con.close()
+
+
+# ------------------------------------------------------------------ #
+# (c3) strength "exact" for arithmetic mix rows                      #
+# ------------------------------------------------------------------ #
+
+def test_exact_strength_accepted_for_mix_row() -> None:
+    """A claim citing a device mix row with strength='exact' is accepted."""
+    iid, date = "I6", "2016-11-04"  # I6: conversion_rate device mix incident
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    rows = session.test_dimension("conversion_rate", "device")
+    mix_row = next((r for r in rows if r["kind"] == "mix"), None)
+    assert mix_row is not None, "No mix row for conversion_rate x device on I6/2016-11-04"
+    assert mix_row["verdict"] == "arithmetic", f"Expected arithmetic, got {mix_row['verdict']}"
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": "conversion_rate", "dimension": "device"}}]},
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {
+                    "pattern": "mix",
+                    "claims": [{
+                        "entry_id": mix_row["entry_id"],
+                        "direction": mix_row["direction"],
+                        "strength": "exact",
+                    }],
+                    "narrative": "Device mix shift drove conversion_rate change.",
+                },
+            }]
+        },
+    ]
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok"
+    assert result["n_rejected"] == 0, f"Unexpected rejections: {result['rejected']}"
+    assert len(result["answer"]["claims"]) == 1
+    con.close()
+
+
+def test_i6_mix_pattern_passes_score_b() -> None:
+    """A scripted mix answer citing the device mix row passes score_b on an I6 dev date."""
+    iid, date = "I6", "2016-11-04"
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    rows = session.test_dimension("conversion_rate", "device")
+    mix_row = next((r for r in rows if r["kind"] == "mix"), None)
+    assert mix_row is not None
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": "conversion_rate", "dimension": "device"}}]},
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {
+                    "pattern": "mix",
+                    "claims": [{
+                        "entry_id": mix_row["entry_id"],
+                        "direction": mix_row["direction"],
+                        "strength": "exact",
+                    }],
+                    "narrative": "Device mix shift.",
+                },
+            }]
+        },
+    ]
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok"
+
+    agent_answer = _dict_to_answer(result["answer"])
+    sb = score_b(agent_answer, iid)
+    assert sb["pattern_correct"] is True, f"Expected pattern_correct=True, got {sb}"
     con.close()
 
 

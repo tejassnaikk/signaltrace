@@ -1,6 +1,6 @@
 """Agent loop for M6 (PLAN.md Section 4.1).
 
-run_agent(session, client, budget=12) -> dict
+run_agent(session, client, budget=14) -> dict
 
 The loop exposes four tools to the model: get_factor_decomposition,
 test_dimension, get_ledger_summary, and submit_answer.  submit_answer
@@ -17,19 +17,21 @@ import traceback as _tb
 from typing import Any
 
 from agent.prompt import SYSTEM_PROMPT
+from agent.tools import _row_direction
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
 
 _ALLOWED_METRICS = list(REVENUE_FACTORS)
 _ALLOWED_DIMENSIONS = list(DIMENSIONS)
 _PATTERNS = ("localized", "broad", "mix", "none")
 _DIRECTIONS = ("up", "down")
-_STRENGTHS = ("strong", "plausible", "untested")
+_STRENGTHS = ("strong", "plausible", "untested", "exact")
 
 # Strength word → the ledger verdict it must match
 _STRENGTH_TO_VERDICT = {
     "strong": "strong",
     "plausible": "plausible",
     "untested": "material_untested",
+    "exact": "arithmetic",
 }
 
 # ------------------------------------------------------------------ #
@@ -54,8 +56,8 @@ _TOOLS = [
             "name": "test_dimension",
             "description": (
                 "Test every segment of one dimension for one metric. Returns "
-                "segment, kind, verdict, basis, eligible, contribution, "
-                "q_value, and entry_id for each row."
+                "segment, kind, direction, verdict, basis, eligible, "
+                "contribution, q_value, and entry_id for each row."
             ),
             "parameters": {
                 "type": "object",
@@ -121,7 +123,8 @@ _TOOLS = [
                                     "enum": list(_STRENGTHS),
                                     "description": (
                                         "strong/plausible for significance-tested rows; "
-                                        "untested for aov segments or ineligible rows."
+                                        "untested for aov segments or ineligible rows; "
+                                        "exact for arithmetic mix rows."
                                     ),
                                 },
                             },
@@ -171,13 +174,6 @@ def _validate_submit_schema(args: Any) -> str | None:
     return None
 
 
-def _entry_direction(entry) -> str:
-    """'down' if actual < expected, 'up' otherwise (or 'up' when values unknown)."""
-    if entry.actual is None or entry.expected is None:
-        return "up"
-    return "down" if entry.actual < entry.expected else "up"
-
-
 def _check_claims(
     raw_claims: list[dict], ledger
 ) -> tuple[list[dict], list[dict]]:
@@ -201,7 +197,7 @@ def _check_claims(
             rejected.append({**c, "reason": f"no ledger entry {entry_id!r}"})
             continue
 
-        expected_dir = _entry_direction(entry)
+        expected_dir = _row_direction(entry.actual, entry.expected)
         if direction != expected_dir:
             rejected.append({
                 **c, "reason":

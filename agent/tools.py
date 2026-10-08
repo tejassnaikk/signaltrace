@@ -28,6 +28,17 @@ ALLOWED_METRICS = list(REVENUE_FACTORS)
 ALLOWED_DIMENSIONS = list(DIMENSIONS)
 
 
+def _row_direction(actual, expected) -> str:
+    """'down' if actual < expected, 'up' otherwise (or 'up' when either is None).
+
+    Shared definition used by both test_dimension rows and the loop checker
+    so the two cannot drift apart.
+    """
+    if actual is None or expected is None:
+        return "up"
+    return "down" if actual < expected else "up"
+
+
 def _safe_float(x) -> float | None:
     """Return a Python float, or None for NaN/None/non-numeric."""
     if x is None:
@@ -179,6 +190,7 @@ class ToolSession:
                 {
                     "segment": e.segment,
                     "kind": e.kind,
+                    "direction": _row_direction(e.actual, e.expected),
                     "contribution": _safe_float(e.contribution),
                     "verdict": e.verdict,
                     "basis": e.basis,
