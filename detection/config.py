@@ -132,7 +132,9 @@ VALIDATOR = {
     "high_contribution": 0.30,
     "q_strong": 0.05,
     "q_plausible": 0.10,
-    # Benjamini-Hochberg family = (metric, investigation). Sessions hypotheses
-    # and conversion hypotheses are different outcome families.
+    # Unused historical key — kept for reference only.  BH actually runs per
+    # (metric, dimension): one family per validate_segments() call in
+    # investigation/validator.py lines 277-282 (9 families total for a full
+    # forced run).  This key is never read by any code path.
     "bh_family": ("metric",),
 }
