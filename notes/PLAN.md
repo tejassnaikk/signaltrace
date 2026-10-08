@@ -903,6 +903,68 @@ dies partway through is a real, not theoretical, risk.
 
 ---
 
+## 4.2 Dev iteration protocol (pre-registered before any real-model run)
+
+**Written 2026-10-07.  This section is a pre-registration: all rules are
+fixed now, before the first real-model evaluation run.**
+
+### Prompt iteration budget
+
+At most **5 system-prompt versions** (v0 through v4).  Once this budget is
+exhausted no further prompt changes are permitted before the held-out run.
+
+### Evaluation unit
+
+Every prompt version is evaluated on **all 41 dev dates × 3 runs = 123
+runs**.  Debugging runs using `--limit` are permitted at any time but do not
+count toward version selection and are not reported.
+
+### Think-mode comparison
+
+After the winning prompt version is chosen, **one** comparison run of
+`think=False` vs `think=True` is performed on that prompt, each over the
+full 41 dev dates × 3 runs.  No further variants are tested.
+
+### Selection rule
+
+Rank candidates by (highest total dev Score B top-1 count) → tie-break by
+(fewer checker-rejected claims across all runs) → tie-break by (fewer
+failed runs).  The winning (prompt version, think setting) pair is used for
+the held-out run with no further adjustment.
+
+### Freeze and held-out
+
+The selected configuration is committed and tagged `agent-frozen`.  The
+held-out run is then executed exactly once via:
+
+```
+python -m evaluation.run_agent --split heldout --i-confirm-heldout
+```
+
+No re-runs, no parameter changes after that tag.
+
+### Reporting requirement
+
+Every prompt version's full dev results file is retained in
+`evaluation/results/`.  The aggregate counts (Score B top-1, Score A by
+incident, failed runs, checker-rejected) for **all** evaluated versions are
+reported in this PLAN, not only the winner.
+
+### Motivation constraints
+
+Prompt changes between versions may only be motivated by **dev run traces**
+(`result["trace"]` from `run_agent.py`).  Examining or reasoning about the
+held-out ground truth or the held-out results file before `agent-frozen` is
+tagged is a protocol violation.
+
+### Runtime estimate
+
+Each full dev evaluation is approximately 123 agent runs.  On this machine
+with the local model, estimated wall time is **4–6 hours**.  Plan overnight
+runs; do not interrupt mid-evaluation.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,

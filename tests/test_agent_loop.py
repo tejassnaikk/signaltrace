@@ -378,6 +378,36 @@ def test_c_budget_fails_c1_scoring() -> None:
     con.close()
 
 
+def test_c_exhaustive_path_with_two_repairs_ok() -> None:
+    """Exhaustive path (11 regular calls) + 2 malformed submits + 1 valid = 14 total.
+
+    Verifies the default budget=14 fits: submit_answer counts against the budget
+    (line 321 of loop.py increments tc_total before the schema check), so the worst
+    case exhaustive run needs exactly 14 calls.
+    """
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]  # 9 pairs
+    responses = []
+    responses.append({"tool_calls": [{"name": "get_factor_decomposition", "args": {}}]})
+    for m, d in pairs:
+        responses.append({"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]})
+    responses.append({"tool_calls": [{"name": "get_ledger_summary", "args": {}}]})
+    # 2 malformed submits + 1 valid = 3 submit attempts
+    responses.append(_BAD_SUBMIT)
+    responses.append(_BAD_SUBMIT)
+    responses.append(_GOOD_SUBMIT)
+    # Total: 1 + 9 + 1 + 1 + 1 + 1 = 14 calls; budget=14 → status ok
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok", (
+        f"exhaustive + 2 repairs should fit budget=14, got {result['status']!r}"
+    )
+    con.close()
+
+
 # ------------------------------------------------------------------ #
 # (d) Malformed submit_answer repair                                  #
 # ------------------------------------------------------------------ #

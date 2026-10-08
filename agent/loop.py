@@ -259,8 +259,13 @@ def _tool_msg(name: str, content: Any) -> dict:
 # Main loop                                                           #
 # ------------------------------------------------------------------ #
 
-def run_agent(session, client, budget: int = 12) -> dict:
+def run_agent(session, client, budget: int = 14) -> dict:
     """Run the evidence-constrained agent loop.
+
+    Budget counts ALL tool calls including submit_answer and repair attempts.
+    The exhaustive path (9 test_dimension + get_factor_decomposition +
+    get_ledger_summary) plus 2 malformed repairs + 1 valid submit = 14 calls,
+    which is exactly the default budget.
 
     Returns a dict with:
         answer      : plain dict (pattern, claims, primary, narrative) or None
