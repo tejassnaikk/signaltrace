@@ -1,0 +1,344 @@
+"""Resumable agent evaluation runner (M6, PLAN.md Section 4.1).
+
+Usage:
+    python -m evaluation.run_agent --split dev [--runs 3] [--limit N]
+    python -m evaluation.run_agent --split heldout --i-confirm-heldout [--runs 3]
+
+For --split heldout the script also requires a git tag named 'agent-frozen'
+to exist on the current HEAD (or any ancestor) — refuses otherwise.
+
+Output: evaluation/results/agent_<split>_<config_hash>.jsonl
+One JSON line per finished (incident, date, run), flushed/fsynced immediately.
+On restart, lines already present are skipped (resumable).
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import traceback
+from dataclasses import asdict
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from agent.llm import OllamaClient
+from agent.loop import run_agent
+from agent.prompt import VERSION as PROMPT_VERSION
+from evaluation.arm_neutral import (
+    Answer, Claim, c1_claim_counts, check_answer, engine_answer,
+    load_ground_truth, score_a, score_b,
+)
+from evaluation.injector import build_incident_con
+from agent.tools import ToolSession
+
+INCIDENTS = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
+RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
+
+
+# ------------------------------------------------------------------ #
+# Helpers                                                              #
+# ------------------------------------------------------------------ #
+
+def _config_hash(config_dict: dict, prompt_version: str) -> str:
+    payload = json.dumps(
+        {"config": config_dict, "prompt": prompt_version}, sort_keys=True
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:8]
+
+
+def _git_head() -> str:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=ROOT
+        )
+        return r.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def _agent_frozen_tag_exists() -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "tag"], capture_output=True, text=True, cwd=ROOT
+        )
+        return "agent-frozen" in r.stdout.split()
+    except Exception:
+        return False
+
+
+def _load_done_keys(path: str) -> set[str]:
+    done = set()
+    if not os.path.exists(path):
+        return done
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                key = f"{rec['incident_id']}_{rec['date']}_{rec['run']}"
+                done.add(key)
+            except Exception:
+                pass
+    return done
+
+
+def _dict_to_claim(d: dict) -> Claim:
+    return Claim(
+        metric=d["metric"],
+        dimension=d["dimension"],
+        segment=d["segment"],
+        direction=d["direction"],
+        kind=d["kind"],
+        evidence_ids=d["evidence_ids"],
+        strength=d["strength"],
+        basis=d.get("basis"),
+    )
+
+
+def _dict_to_answer(d: dict | None) -> Answer | None:
+    if d is None:
+        return None
+    claims = [_dict_to_claim(c) for c in d.get("claims", [])]
+    primary = [_dict_to_claim(c) for c in d.get("primary", [])]
+    return Answer(
+        pattern=d["pattern"],
+        claims=claims,
+        primary=primary,
+        narrative=d.get("narrative", ""),
+    )
+
+
+def _score_run(result: dict, iid: str, ledger) -> dict:
+    """Score one run.  Failed runs fail every score."""
+    status = result["status"]
+    if status != "ok" or result["answer"] is None:
+        # failed_* run: all scores fail
+        return {
+            "score_a": None,
+            "score_b": {
+                "pattern_correct": False,
+                "top1_correct": False,
+                "top3_correct": False,
+            },
+            "c1_claim_counts": {"false_positives": 0, "untested_claims": 0},
+            "checker": {"n_claims": 0, "n_rejected": 0, "rejected": []},
+            "failed_run": True,
+        }
+
+    answer = _dict_to_answer(result["answer"])
+
+    sa = score_a(answer, iid)
+    sb = score_b(answer, iid)
+    c1 = c1_claim_counts(answer) if iid == "C1" else None
+    chk = check_answer(answer, ledger)
+
+    return {
+        "score_a": {str(k): v for k, v in sa.items()} if sa is not None else None,
+        "score_b": sb,
+        "c1_claim_counts": c1,
+        "checker": {
+            "n_claims": chk["n_claims"],
+            "n_rejected": chk["n_rejected"],
+            "rejected": [str(r) for r in chk["rejected"]],
+        },
+        "failed_run": False,
+    }
+
+
+def _answer_to_dict(answer: Answer | None) -> dict | None:
+    if answer is None:
+        return None
+    def _claim_to_dict(c):
+        return {
+            "metric": c.metric, "dimension": c.dimension, "segment": c.segment,
+            "direction": c.direction, "kind": c.kind,
+            "evidence_ids": c.evidence_ids, "strength": c.strength,
+            "basis": c.basis,
+        }
+    return {
+        "pattern": answer.pattern,
+        "claims": [_claim_to_dict(c) for c in answer.claims],
+        "primary": [_claim_to_dict(c) for c in answer.primary],
+        "narrative": answer.narrative,
+    }
+
+
+# ------------------------------------------------------------------ #
+# Main                                                                 #
+# ------------------------------------------------------------------ #
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Resumable agent evaluation runner"
+    )
+    parser.add_argument("--split", choices=["dev", "heldout"], required=True)
+    parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Stop after this many (incident, date) pairs (for testing)")
+    parser.add_argument("--i-confirm-heldout", action="store_true",
+                        help="Required when --split heldout")
+    args = parser.parse_args(argv)
+
+    # Heldout guard
+    if args.split == "heldout":
+        if not args.i_confirm_heldout:
+            print(
+                "Error: --split heldout requires --i-confirm-heldout. "
+                "Run on heldout data only when you have finished developing on dev.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not _agent_frozen_tag_exists():
+            print(
+                "Error: no 'agent-frozen' git tag found. "
+                "Tag the commit (`git tag agent-frozen`) before running on held-out data.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # Agent config (no Ollama connection here)
+    try:
+        from agent.config import config as _agent_config
+        cfg = _agent_config()
+    except Exception:
+        # config.py tries to connect to Ollama at import time; handle gracefully
+        cfg = {"model_tag": "unknown", "options": {}, "think": False}
+
+    client = OllamaClient(cfg)
+    chash = _config_hash(cfg, PROMPT_VERSION)
+
+    out_path = os.path.join(RESULTS_DIR, f"agent_{args.split}_{chash}.jsonl")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    done_keys = _load_done_keys(out_path)
+    git_head = _git_head()
+
+    # Build work list
+    work: list[tuple[str, str]] = []
+    for iid in INCIDENTS:
+        gt = load_ground_truth(iid)
+        for date in gt["dates"]:
+            work.append((iid, date))
+    if args.limit is not None:
+        work = work[: args.limit]
+
+    total = len(work) * args.runs
+    done_count = sum(
+        1 for iid, date in work
+        for run in range(args.runs)
+        if f"{iid}_{date}_{run}" in done_keys
+    )
+    print(
+        f"split={args.split}  config_hash={chash}  "
+        f"out={os.path.relpath(out_path, ROOT)}"
+    )
+    print(f"work: {total} runs ({len(work)} dates × {args.runs}), "
+          f"{done_count} already done")
+
+    # Aggregate counters
+    agg: dict[str, dict] = {
+        iid: {"n": 0, "sa_pass": {}, "sb_pat": 0, "sb_t1": 0, "sb_t3": 0,
+               "failed": 0, "checker_rejected": 0}
+        for iid in INCIDENTS
+    }
+
+    with open(out_path, "a", buffering=1) as fh:
+        for iid, date in work:
+            gt = load_ground_truth(iid)
+            for run in range(args.runs):
+                key = f"{iid}_{date}_{run}"
+                if key in done_keys:
+                    continue
+
+                print(f"  {iid} {date} run={run} ... ", end="", flush=True)
+
+                try:
+                    con = build_incident_con(iid, date)
+                    session = ToolSession(date, con)
+                    result = run_agent(session, client)
+                    ledger = session._harness_ledger()
+                    scores = _score_run(result, iid, ledger)
+                    con.close()
+                except Exception:
+                    result = {
+                        "answer": None,
+                        "trace": [],
+                        "tool_call_counts": {},
+                        "status": "failed_error",
+                        "n_rejected": 0,
+                        "rejected": [],
+                        "error": traceback.format_exc(),
+                    }
+                    scores = _score_run(result, iid, None)
+
+                record = {
+                    "incident_id": iid,
+                    "date": str(date),
+                    "run": run,
+                    "status": result["status"],
+                    "answer": result["answer"],
+                    "n_rejected": result["n_rejected"],
+                    "tool_call_counts": result["tool_call_counts"],
+                    "score_a": scores["score_a"],
+                    "score_b": scores["score_b"],
+                    "c1_claim_counts": scores["c1_claim_counts"],
+                    "checker": scores["checker"],
+                    "failed_run": scores["failed_run"],
+                    "config": cfg,
+                    "prompt_version": PROMPT_VERSION,
+                    "git_head": git_head,
+                }
+
+                fh.write(json.dumps(record, default=str) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+
+                status_tag = result["status"]
+                print(status_tag)
+
+                # Update aggregates
+                a = agg[iid]
+                a["n"] += 1
+                if scores["failed_run"]:
+                    a["failed"] += 1
+                else:
+                    sb = scores["score_b"]
+                    a["sb_pat"] += int(sb.get("pattern_correct", False))
+                    if sb.get("top1_correct") is not None:
+                        a["sb_t1"] += int(sb["top1_correct"])
+                    if sb.get("top3_correct") is not None:
+                        a["sb_t3"] += int(sb["top3_correct"])
+                    a["checker_rejected"] += scores["checker"]["n_rejected"]
+                    if scores["score_a"]:
+                        for tgt, passed in scores["score_a"].items():
+                            a["sa_pass"].setdefault(tgt, []).append(int(passed))
+
+    # Summary
+    print("\n=== Summary ===")
+    for iid in INCIDENTS:
+        a = agg[iid]
+        n = a["n"]
+        if n == 0:
+            continue
+        parts = [f"{iid} n={n}"]
+        if a["failed"]:
+            parts.append(f"failed={a['failed']}")
+        parts.append(f"score_b_pattern={a['sb_pat']}/{n}")
+        if a["sa_pass"]:
+            for tgt, results in a["sa_pass"].items():
+                parts.append(f"score_a[{tgt}]={sum(results)}/{len(results)}")
+        if a["checker_rejected"]:
+            parts.append(f"checker_rejected={a['checker_rejected']}")
+        print("  " + "  ".join(parts))
+
+    print(f"\nOutput: {out_path}")
+
+
+if __name__ == "__main__":
+    main()

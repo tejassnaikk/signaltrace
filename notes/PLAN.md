@@ -870,6 +870,37 @@ dies partway through is a real, not theoretical, risk.
   SSD, both currently disconnected.  They are not modified here and will
   be re-validated when the SSD is reconnected.
 
+**[Amended 2026-10-07: agent loop, checker, resumable runner, M6 Part 2]**
+
+- **Cite-not-transcribe answer schema.** `submit_answer` accepts a list of
+  `{entry_id, direction, strength}` triples; the loop hydrates
+  `metric/dimension/segment/kind/verdict/basis` from the harness ledger.
+  The agent never copies content it read from tool output back into its
+  answer — it only cites the entry_id it was given.  This prevents
+  hallucination of segment names and ensures every claim is traceable to
+  a specific ledger row.
+
+- **`submit_answer` counts as a tool call against the budget.**  The budget
+  is 12 total tool calls (regular + submit).  Any call beyond 12 — whether
+  a regular tool or a submit — transitions the run to `failed_budget`.
+
+- **Malformed submit handling (up to 2 repairs).** If `submit_answer`
+  fails schema validation, the error is returned to the model as a tool
+  result and `malformed_count` increments.  After 3 malformed submits
+  (2 retries exhausted) the run is marked `failed_malformed`.  Semantic
+  checker failures (wrong direction, wrong strength, missing entry_id) are
+  NOT schema errors — those claims are silently removed from `accepted`
+  and the run still completes with `status=ok`.
+
+- **Failed-run scoring rule.** Any run with `status != ok` is treated as a
+  total failure: `score_a=None`, all `score_b` flags False, no checker
+  counts.  This is the scoring floor; `answer=None` cannot be scored.
+
+- **Heldout guard (two-layer).** `evaluation/run_agent.py --split heldout`
+  requires (1) the `--i-confirm-heldout` flag and (2) a `git tag
+  agent-frozen` on the current HEAD.  Neither condition alone suffices.
+  The dev split has no guard and can be run freely during development.
+
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
@@ -1871,15 +1902,22 @@ signaltrace/
 │   ├── evidence.py               (append-only ledger)
 │   └── orchestrator.py           (end-to-end, no LLM)
 ├── agent/            [M6 Part 1 — config.py (frozen model pin), smoke_test.py,
-│   ├── config.py      tools.py (date-bound ToolSession, 3 tools, harness Ledger)]
-│   ├── smoke_test.py  [pending SSD reconnect]
-│   └── tools.py       [M6 Part 1 — ToolSession: get_factor_decomposition,
-│                        test_dimension, get_ledger_summary; 127/127 tests pass]
+│   ├── config.py      [M6 Part 1 — frozen model pin]
+│   ├── smoke_test.py  [M6 Part 1 — pending SSD reconnect]
+│   ├── tools.py       [M6 Part 1 — ToolSession: get_factor_decomposition,
+│   │                   test_dimension, get_ledger_summary; 127/127 tests pass]
+│   ├── llm.py         [M6 Part 2 — ChatResult, OllamaClient (lazy), FakeClient]
+│   ├── prompt.py      [M6 Part 2 — SYSTEM_PROMPT VERSION="v0"]
+│   └── loop.py        [M6 Part 2 — run_agent(session, client, budget=12) → dict]
 ├── tests/
-│   └── test_agent_tools.py  [M6 Part 1 — 127 tests: equivalence (a/b), ledger
-│                              scoping (c), checker rejection (d), invalid inputs (e),
-│                              idempotency (f), grep (g); all on 41 dev dates]
-├── evaluation/        [built — injector.py, score.py, ground_truth/*.json (M3 benchmark, 34/36)]
+│   ├── test_agent_tools.py  [M6 Part 1 — 127 tests: a/b equivalence, c scoping,
+│   │                          d checker rejection, e invalid inputs, f idempotency,
+│   │                          g grep; all on 41 dev dates]
+│   └── test_agent_loop.py   [M6 Part 2 — 14 tests: a scripted Score A/B,
+│                              b checker rejects, c budget, d malformed repair,
+│                              e resume, f heldout guard, g grep; FakeClient only]
+├── evaluation/        [built — injector.py, score.py, arm_neutral.py,
+│                       run_agent.py (M6 Part 2), ground_truth/*.json]
 ├── app/                [built — dashboard.py (M4, commit 4b7a950)]
 ├── notes/
 │   ├── baseline.md               (all empirical findings, with numbers)
