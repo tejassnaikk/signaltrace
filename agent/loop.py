@@ -56,8 +56,9 @@ _TOOLS = [
             "name": "test_dimension",
             "description": (
                 "Test every segment of one dimension for one metric. Returns "
-                "segment, kind, direction, verdict, basis, eligible, "
-                "contribution, q_value, and entry_id for each row."
+                "segment, kind, direction, verdict, contribution, q_value, and "
+                "entry_id for each non-immaterial row. Immaterial rows "
+                "(contribution < 5%) are collapsed to a count note."
             ),
             "parameters": {
                 "type": "object",
@@ -79,7 +80,11 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "get_ledger_summary",
-            "description": "Read-only list of evidence entries recorded so far.",
+            "description": (
+                "Compact list of non-immaterial evidence entries recorded so far: "
+                "entry_id and verdict only. Use to review coverage and find "
+                "entry_ids for claims."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -255,7 +260,11 @@ def _tool_msg(name: str, content: Any) -> dict:
 # Main loop                                                           #
 # ------------------------------------------------------------------ #
 
-def run_agent(session, client, budget: int = 14) -> dict:
+_CONTEXT_GUARD_TOKENS = 8000  # stay below Ollama's observed 8194 effective limit
+
+
+def run_agent(session, client, budget: int = 14,
+              context_limit: int = _CONTEXT_GUARD_TOKENS) -> dict:
     """Run the evidence-constrained agent loop.
 
     Budget counts ALL tool calls including submit_answer and repair attempts.
@@ -267,7 +276,7 @@ def run_agent(session, client, budget: int = 14) -> dict:
         answer      : plain dict (pattern, claims, primary, narrative) or None
         trace       : list of event dicts
         tool_call_counts : session._call_counts_snapshot()
-        status      : "ok" | "failed_budget" | "failed_malformed" | "failed_error"
+        status      : "ok" | "failed_budget" | "failed_malformed" | "failed_context" | "failed_error"
         n_rejected  : int — claims removed by the checker
         rejected    : list of rejected claim dicts with "reason"
         error       : str (traceback) for failed_error, else None
@@ -287,6 +296,15 @@ def run_agent(session, client, budget: int = 14) -> dict:
 
     try:
         while True:
+            # Context guard: fail loudly if conversation is about to exceed
+            # Ollama's effective context limit (observed ~8194 even with
+            # num_ctx=16384, likely due to model loaded before option took
+            # effect).  3 chars ≈ 1 token is a conservative estimate.
+            _ctx_chars = sum(len(json.dumps(m, default=str)) for m in messages)
+            if _ctx_chars // 3 > context_limit:
+                status = "failed_context"
+                break
+
             resp = client.chat(messages, _TOOLS)
 
             # Record assistant turn in messages
@@ -375,7 +393,8 @@ def run_agent(session, client, budget: int = 14) -> dict:
                     messages.append(_tool_msg(name, result))
                     trace.append({"event": "tool_call", "name": name, "args": args})
 
-            if status in ("ok", "failed_budget", "failed_malformed", "failed_error"):
+            if status in ("ok", "failed_budget", "failed_malformed",
+                          "failed_context", "failed_error"):
                 break
             # If broke_out is True but status is None, the outer loop continues
             # (e.g. after a malformed submit repair was sent back)

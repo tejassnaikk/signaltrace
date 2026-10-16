@@ -82,13 +82,22 @@ def test_a_equivalence(iid: str, date: str) -> None:
             assert isinstance(rows, list), \
                 f"{iid} {date} ({metric},{dimension}): expected list"
 
+            # render_test_dimension collapses immaterial rows to a note entry
+            material_rows = [r for r in rows if "entry_id" in r]
+            note_rows = [r for r in rows if "note" in r]
             expected = by_key.get((metric, dimension), [])
-            assert len(rows) == len(expected), (
-                f"{iid} {date} ({metric},{dimension}): "
-                f"got {len(rows)} rows, expected {len(expected)}"
-            )
+            expected_material = [e for e in expected if e.verdict != "immaterial"]
+            n_immaterial = len(expected) - len(expected_material)
 
-            for i, (row, e) in enumerate(zip(rows, expected)):
+            assert len(material_rows) == len(expected_material), (
+                f"{iid} {date} ({metric},{dimension}): "
+                f"got {len(material_rows)} material rows, expected {len(expected_material)}"
+            )
+            # at most one note entry, present iff any rows were omitted
+            assert len(note_rows) == (1 if n_immaterial else 0), \
+                f"{iid} {date} ({metric},{dimension}): expected {'1 note' if n_immaterial else 'no note'}"
+
+            for i, (row, e) in enumerate(zip(material_rows, expected_material)):
                 ctx = f"{iid} {date} ({metric},{dimension}) row {i}"
                 assert row["segment"] == e.segment, f"{ctx}: segment"
                 assert row["kind"] == e.kind, f"{ctx}: kind"
@@ -275,6 +284,119 @@ def test_f_no_duplicate_entries(iid: str, date: str) -> None:
 # ---------------------------------------------------------------------------
 # (g) agent/tools.py imports nothing from evaluation/ and has no "heldout"
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# (h) render compaction: immaterial rows collapsed, ledger summary compact
+# ---------------------------------------------------------------------------
+
+def test_h_immaterial_rows_collapsed() -> None:
+    """render_test_dimension collapses immaterial rows to a single note entry."""
+    from agent.render import render_test_dimension
+    rows = [
+        {"segment": "A", "verdict": "strong", "entry_id": "E1"},
+        {"segment": "B", "verdict": "immaterial", "entry_id": "E2"},
+        {"segment": "C", "verdict": "immaterial", "entry_id": "E3"},
+    ]
+    rendered = render_test_dimension(rows)
+    material = [r for r in rendered if "entry_id" in r]
+    notes = [r for r in rendered if "note" in r]
+    assert len(material) == 1
+    assert material[0]["segment"] == "A"
+    assert len(notes) == 1
+    assert "2" in notes[0]["note"]  # "2 immaterial row(s) omitted"
+
+
+def test_h_no_note_when_no_immaterial() -> None:
+    """No note entry when all rows are material."""
+    from agent.render import render_test_dimension
+    rows = [
+        {"segment": "A", "verdict": "strong", "entry_id": "E1"},
+        {"segment": "B", "verdict": "plausible", "entry_id": "E2"},
+    ]
+    rendered = render_test_dimension(rows)
+    assert len(rendered) == 2
+    assert all("entry_id" in r for r in rendered)
+
+
+def test_h_ledger_summary_compact() -> None:
+    """render_ledger_summary returns only entry_id + verdict, no immaterial."""
+    from agent.render import render_ledger_summary
+
+    class FakeEntry:
+        def __init__(self, eid, verdict, actual=1.0, expected=2.0):
+            self.evidence_id = eid
+            self.verdict = verdict
+            self.actual = actual
+            self.expected = expected
+
+    entries = [
+        FakeEntry("E1", "strong"),
+        FakeEntry("E2", "immaterial"),
+        FakeEntry("E3", "plausible"),
+    ]
+    rendered = render_ledger_summary(entries)
+    assert len(rendered) == 2
+    ids = [r["entry_id"] for r in rendered]
+    assert "E1" in ids and "E3" in ids and "E2" not in ids
+    for r in rendered:
+        assert set(r.keys()) == {"entry_id", "verdict"}
+
+
+def test_h_context_guard_fires(tmp_path) -> None:
+    """run_agent returns failed_context when conversation exceeds context_limit."""
+    import json
+    from agent.loop import run_agent
+    from agent.llm import FakeClient
+    from evaluation.injector import build_incident_con
+    # Force the guard to fire after the first client.chat call
+    # by using a very small context_limit and a large fake response
+    con = build_incident_con("I1", "2017-01-26")
+    from agent.tools import ToolSession
+    session = ToolSession("2017-01-26", con)
+
+    big_content = "x" * 9000  # 3000 fake tokens of content
+    scripted = [{"content": big_content, "tool_calls": []}]
+    result = run_agent(session, FakeClient(scripted), context_limit=100)
+    assert result["status"] == "failed_context"
+
+
+def test_h_exhaustive_transcript_under_7000_tokens() -> None:
+    """All 41 dev dates: exhaustive transcript (gfd+9td+gls) fits in 7000 tokens."""
+    import json
+    from agent.prompt import SYSTEM_PROMPT
+    from evaluation.injector import build_incident_con
+    from agent.tools import ToolSession
+    from evaluation.arm_neutral import load_ground_truth
+
+    INCIDENTS_DEV = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
+    for iid in INCIDENTS_DEV:
+        gt = load_ground_truth(iid)
+        for date in gt["dates"]:
+            con = build_incident_con(iid, str(date))
+            sess = ToolSession(str(date), con)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Investigate {date}."},
+            ]
+            gfd = sess.get_factor_decomposition()
+            messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "get_factor_decomposition", "arguments": {}}}]})
+            messages.append({"role": "tool", "content": json.dumps(gfd)})
+            from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
+            for metric in REVENUE_FACTORS:
+                for dim in DIMENSIONS:
+                    rows = sess.test_dimension(metric, dim)
+                    messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "test_dimension", "arguments": {"metric": metric, "dimension": dim}}}]})
+                    messages.append({"role": "tool", "content": json.dumps(rows)})
+            gls = sess.get_ledger_summary()
+            messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "get_ledger_summary", "arguments": {}}}]})
+            messages.append({"role": "tool", "content": json.dumps(gls)})
+            total = sum(len(json.dumps(m, default=str)) for m in messages)
+            tokens = total // 3
+            assert tokens < 7000, (
+                f"{iid} {date}: exhaustive transcript {tokens} tokens >= 7000"
+            )
+            con.close()
+
 
 def test_g_no_evaluation_imports() -> None:
     """Grep-style check: agent/tools.py is evaluation/-clean."""

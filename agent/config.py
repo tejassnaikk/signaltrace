@@ -21,6 +21,7 @@ OPTIONS = {
     "temperature": 0,
     "seed": 20261001,
     "num_ctx": 16384,
+    "num_predict": 2048,
 }
 
 # Qwen3 is a hybrid reasoning model - whether to enable its thinking mode

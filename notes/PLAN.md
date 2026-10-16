@@ -972,6 +972,78 @@ dies partway through is a real, not theoretical, risk.
   Score A/B: all False (failed run).  Run duration: ~9 minutes each (model
   warm; cold-start would add 217.6s to first call only).
 
+**[Amended 2026-10-16: compact tool output, context guard, num_predict=2048]**
+
+- **Root cause of stall identified: context truncation.**  The first plumbing
+  run's Ollama log showed `limit=8194` — the model had been loaded with the
+  OS default context (8192) before `num_ctx=16384` took effect.  With
+  `n_keep=4`, Ollama retains only 4 system-prompt tokens once the conversation
+  exceeds 8192 tokens.  By the nudge cycle the model had lost the entire
+  `submit_answer` schema and could not call it.
+
+- **Fix: `agent/render.py` — data/rendering separation.**  New module with
+  two functions.  `render_test_dimension(rows)` collapses immaterial rows
+  (verdict = "immaterial", contribution < 5%, never claimable) to a single
+  count note; material rows are returned intact with all fields.
+  `render_ledger_summary(entries)` returns `{entry_id, verdict}` pairs only
+  (down from 6 fields); immaterial entries excluded.  `agent/tools.py`
+  imports these and returns rendered output; raw rows are stored in
+  `_revealed` for repeat-call idempotency and checker access.
+
+- **Fix: context guard in `agent/loop.py`.**  At the top of each loop
+  iteration, estimates conversation size as `sum(len(json.dumps(m)) for m in
+  messages) // 3`.  If estimate exceeds `context_limit` (default 8000),
+  returns `status = "failed_context"` immediately.  Prevents silent Ollama
+  truncation by failing loudly before the request is sent.
+
+- **Fix: `num_predict=2048` added to OPTIONS.**  Limits model output tokens
+  per turn, preventing verbose responses from growing the context unchecked.
+  This change also forced an Ollama model reload; the re-run Ollama log
+  confirmed `n_ctx_slot = 16384` — the correct context size is now active.
+
+- **Exhaustive transcript size measurement (all 41 dev dates).**
+  System prompt + gfd + 9 × td (3 metrics × 3 dimensions) + gls + user
+  message chars // 3.  Config hash changed from `bc81b015` to `23ad1ff5`
+  (num_predict added to OPTIONS).  Results:
+
+  | stat | tokens |
+  |------|--------|
+  | max  | 6,828  |
+  | median | 5,663 |
+  | limit | 8,000 (context_guard) |
+
+  All 41 dev dates pass.  The worst case (I6 2017-03-09, 44 non-immaterial
+  ledger entries) uses 6,828 tokens — 1,172 tokens below the guard limit.
+
+- **Re-run (`--limit 3`, `agent_dev_23ad1ff5_debug.jsonl`).** 3 runs on the
+  same first 3 I1 dev dates:
+
+  | date | status | note |
+  |------|--------|------|
+  | 2017-01-26 | `failed_context` | context guard fired after 6 nudge cycles — model calling submit_answer as plain text; text responses + nudges grew context past 8,000 tokens |
+  | 2017-03-16 | `failed_error` | 2 tool calls (gfd + td), then HTTP 400 from Ollama |
+  | 2017-05-04 | `failed_error` | 0 tool calls; HTTP 400 from Ollama on first request |
+
+  **Truncation check:** 0 new `truncating input prompt` warnings in
+  `~/ollama-server.log` (previously 4 from the first run, still only 4 total).
+  Context fix confirmed working.
+
+  **New failure modes to investigate before prompt v1:**
+  1. Model calls `submit_answer` as plain text (not a tool call) after
+     exhausting coverage.  Context is intact (guard would fire after), but
+     the model confuses function call syntax with text generation.  This is a
+     prompt v0 failure, not a compaction issue.
+  2. HTTP 400 errors from Ollama on runs 2–3.  These fail immediately (< 1 ms),
+     suggesting malformed requests.  `"error"` field was not stored in the
+     record dict; fixed in this amendment — `run_agent.py` now writes
+     `"error": result.get("error")` so traceback is visible on next re-run.
+     Root cause not yet identified.
+
+- **Test count:** 193 passed (up from 127 at M6 Part 1; up from 188 before
+  this amendment).  New tests: `test_h_immaterial_rows_collapsed`,
+  `test_h_no_note_when_no_immaterial`, `test_h_ledger_summary_compact`,
+  `test_h_context_guard_fires`, `test_h_exhaustive_transcript_under_7000_tokens`.
+
 ---
 
 ## 4.2 Dev iteration protocol (pre-registered before any real-model run)

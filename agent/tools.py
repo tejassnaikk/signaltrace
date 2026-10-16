@@ -13,7 +13,6 @@ import json
 import math
 import os
 import sys
-from dataclasses import asdict
 from typing import Any
 
 import pandas as pd
@@ -23,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from investigation.evidence import Ledger
 from investigation.orchestrator import investigate
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
+from agent.render import render_test_dimension, render_ledger_summary
 
 ALLOWED_METRICS = list(REVENUE_FACTORS)
 ALLOWED_DIMENSIONS = list(DIMENSIONS)
@@ -180,7 +180,10 @@ class ToolSession:
 
         key = (metric, dimension)
         if key in self._revealed:
-            return list(self._revealed[key])
+            # render again from raw cache — repeat calls are idempotent
+            rendered = render_test_dimension(self._revealed[key])
+            _assert_serializable(rendered)
+            return rendered
 
         engine_entries = self._entries_by_key.get(key, [])
         rows = []
@@ -200,14 +203,15 @@ class ToolSession:
                 }
             )
 
-        _assert_serializable(rows)
-        self._revealed[key] = rows
-        return list(rows)
+        self._revealed[key] = rows  # raw rows, for checker and repeat-call cache
+        rendered = render_test_dimension(rows)
+        _assert_serializable(rendered)
+        return rendered
 
     def get_ledger_summary(self) -> list[dict]:
-        """Read-only list of harness Ledger entries recorded so far."""
+        """Compact list of non-immaterial harness Ledger entries recorded so far."""
         self._call_counts["get_ledger_summary"] += 1
-        result = [dict(asdict(e)) for e in self._ledger.entries]
+        result = render_ledger_summary(self._ledger.entries)
         _assert_serializable(result)
         return result
 

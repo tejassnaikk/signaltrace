@@ -289,6 +289,7 @@ def main(argv: list[str] | None = None) -> None:
                     "n_rejected": result["n_rejected"],
                     "tool_call_counts": result["tool_call_counts"],
                     "trace": result.get("trace", []),
+                    "error": result.get("error"),
                     "score_a": scores["score_a"],
                     "score_b": scores["score_b"],
                     "c1_claim_counts": scores["c1_claim_counts"],
