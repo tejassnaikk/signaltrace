@@ -13,8 +13,6 @@ or reads them).
 """
 from __future__ import annotations
 
-import ollama
-
 MODEL_TAG = "qwen3:8b"
 MODEL_DIGEST = "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41"
 OLLAMA_VERSION = "0.35.1"
@@ -38,7 +36,7 @@ SERVER_ENV = {
     "OLLAMA_KV_CACHE_TYPE": "q8_0",
     "OLLAMA_LOAD_TIMEOUT": "15m",
     "OLLAMA_KEEP_ALIVE": "2h",
-    "models_storage": "external SSD",
+    "models_storage": "external USB SSD ~38 MB/s",
 }
 
 
@@ -57,6 +55,7 @@ def config() -> dict:
 def _current_server_digest(tag: str) -> str | None:
     """GET /api/tags (via the ollama package, not curl), return the
     installed digest for `tag`, or None if the tag isn't present."""
+    import ollama  # lazy — only needed when Ollama is running
     for m in ollama.list().models:
         if m.model == tag:
             return m.digest
@@ -83,6 +82,3 @@ def _verify_pinned_digest() -> None:
             f"was re-pulled or changed since the pin; refusing to proceed "
             f"with a different model than the one M6 was frozen against."
         )
-
-
-_verify_pinned_digest()

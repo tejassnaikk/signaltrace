@@ -8,6 +8,7 @@ For --split heldout the script also requires a git tag named 'agent-frozen'
 to exist on the current HEAD (or any ancestor) — refuses otherwise.
 
 Output: evaluation/results/agent_<split>_<config_hash>.jsonl
+Debug (--limit) output: evaluation/results/agent_<split>_<config_hash>_debug.jsonl
 One JSON line per finished (incident, date, run), flushed/fsynced immediately.
 On restart, lines already present are skipped (resumable).
 """
@@ -25,6 +26,7 @@ from dataclasses import asdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from agent.config import config as _agent_config, _verify_pinned_digest
 from agent.llm import OllamaClient
 from agent.loop import run_agent
 from agent.prompt import VERSION as PROMPT_VERSION
@@ -42,6 +44,12 @@ RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
+
+def _build_out_path(results_dir: str, split: str, chash: str, limit) -> str:
+    """Output path. --limit runs get a _debug suffix so they never touch the main file."""
+    suffix = "_debug" if limit is not None else ""
+    return os.path.join(results_dir, f"agent_{split}_{chash}{suffix}.jsonl")
+
 
 def _config_hash(config_dict: dict, prompt_version: str) -> str:
     payload = json.dumps(
@@ -203,18 +211,13 @@ def main(argv: list[str] | None = None) -> None:
             )
             sys.exit(1)
 
-    # Agent config (no Ollama connection here)
-    try:
-        from agent.config import config as _agent_config
-        cfg = _agent_config()
-    except Exception:
-        # config.py tries to connect to Ollama at import time; handle gracefully
-        cfg = {"model_tag": "unknown", "options": {}, "think": False}
-
+    # Verify pinned digest at run start (fails loudly if model changed or Ollama down)
+    _verify_pinned_digest()
+    cfg = _agent_config()
     client = OllamaClient(cfg)
     chash = _config_hash(cfg, PROMPT_VERSION)
 
-    out_path = os.path.join(RESULTS_DIR, f"agent_{args.split}_{chash}.jsonl")
+    out_path = _build_out_path(RESULTS_DIR, args.split, chash, args.limit)
     os.makedirs(RESULTS_DIR, exist_ok=True)
     done_keys = _load_done_keys(out_path)
     git_head = _git_head()
@@ -285,6 +288,7 @@ def main(argv: list[str] | None = None) -> None:
                     "answer": result["answer"],
                     "n_rejected": result["n_rejected"],
                     "tool_call_counts": result["tool_call_counts"],
+                    "trace": result.get("trace", []),
                     "score_a": scores["score_a"],
                     "score_b": scores["score_b"],
                     "c1_claim_counts": scores["c1_claim_counts"],

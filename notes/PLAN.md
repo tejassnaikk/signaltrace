@@ -819,9 +819,10 @@ project. **LangGraph is dropped for now** (see the pointer above).
 **Pinned 2026-10-04 (`agent/config.py`):** model tag `qwen3:8b`, full
 digest `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`,
 Ollama server version `0.35.1`. `agent/config.py` re-verifies this digest
-against the running server at import time and fails loudly on any
-mismatch — a silently re-pulled or swapped model must never go unnoticed
-mid-project. `think` (Qwen3's hybrid reasoning mode) is left `False` for
+against the running server at the start of each evaluation run (via
+`_verify_pinned_digest()` called from `evaluation/run_agent.py`'s
+`main()`) and fails loudly on any mismatch — a silently re-pulled or
+swapped model must never go unnoticed mid-project. `think` (Qwen3's hybrid reasoning mode) is left `False` for
 now — a real design choice, deliberately not decided here; it gets
 decided on dev dates only, same as everything else model-behavior-related
 (never on held-out).
@@ -830,12 +831,13 @@ decided on dev dates only, same as everything else model-behavior-related
 package, not curl:** same scenario as an earlier standalone curl check
 (2017-02-06, device dimension, conversion_rate) — prompt text re-authored
 for this script, not a byte-for-byte reproduction, since this session has
-no record of the original wording. Result: exactly one correct tool call
-(`test_dimension(metric="conversion_rate", dimension="device")`), 20.4
-tok/s, 0.0s load (model was already warm from the prior curl check, within
-`OLLAMA_KEEP_ALIVE=2h` — not a fresh cold-load measurement; the earlier
-curl test's 200s cold load from the external SSD is the number that
-matters for a worst-case first-call estimate).
+no record of the original wording. Two measurements:
+- **2026-10-04 (warm):** one correct tool call
+  (`test_dimension(metric="conversion_rate", dimension="device")`), 20.4
+  tok/s, 0.0s load — model was already warm within `OLLAMA_KEEP_ALIVE=2h`.
+- **2026-10-16 (cold):** same result, **20.6 tok/s, 217.6s cold load**
+  from the external USB SSD (~38 MB/s). This is the worst-case first-call
+  latency for any evaluation run.
 
 **The agent runner must be resumable.** Each completed (date, run) pair
 saved immediately, not batched — a restart must skip already-finished
@@ -922,6 +924,53 @@ dies partway through is a real, not theoretical, risk.
   "segment" for within-segment rows.  The "within" translation only happens
   in the checker's output (accepted claim dict).  The prompt was corrected
   to match what the model actually sees in the tool output.
+
+**[Amended 2026-10-16: verification timing, debug-file rule, first plumbing run]**
+
+- **Digest verification moved to run start.**  `_verify_pinned_digest()` is
+  now called at the start of `main()` in `evaluation/run_agent.py`, not at
+  import time.  Importing `agent.config` no longer requires Ollama to be
+  running, so the test suite and harness code work without a live server.
+
+- **Debug-file safety rule.**  Any `evaluation/run_agent.py` invocation that
+  uses `--limit` writes to a separate file
+  `evaluation/results/agent_<split>_<chash>_debug.jsonl` and never touches
+  the main results file `agent_<split>_<chash>.jsonl`.  Enforced by
+  `_build_out_path()` in `run_agent.py`; proved by
+  `test_limit_run_writes_to_debug_file_only` in `tests/test_run_agent.py`.
+
+- **First plumbing run (2026-10-16).** `python -m evaluation.run_agent
+  --split dev --runs 1 --limit 3` on the first 3 I1 dev dates (2017-01-26,
+  2017-03-16, 2017-05-04).  All three runs: **`failed_budget`**.
+  Tool-call counts identical across all runs:
+  `get_factor_decomposition=2, test_dimension=11, get_ledger_summary=1` = 14
+  (budget).  No `submit_answer` was ever called.
+
+  Full trace for run 1 (I1 2017-01-26), 14 calls:
+
+  1. `get_factor_decomposition({date: "2017-01-26"})` ← model passed date arg (ignored)
+  2. `test_dimension(sessions, channel)`
+  3. `test_dimension(sessions, device)`
+  4. `test_dimension(sessions, country)`
+  5. `test_dimension(conversion_rate, channel)`
+  6. `test_dimension(conversion_rate, device)`
+  7. `test_dimension(conversion_rate, country)`
+  8. `test_dimension(aov, channel)`
+  9. `test_dimension(aov, device)`
+  10. `test_dimension(aov, country)`
+  11. `get_ledger_summary({})`
+  — model then generated a text response (no tool call); nudge sent —
+  12. `get_factor_decomposition({})` ← repeated
+  13. `test_dimension(conversion_rate, country)` ← duplicate
+  14. `test_dimension(aov, country)` ← duplicate
+  — budget exhausted; no `submit_answer` —
+
+  **Finding:** with `think=False`, the model completes full 9-call coverage,
+  then stalls generating text instead of calling `submit_answer`.  When
+  nudged, it loops back to tool calls (including duplicates) rather than
+  submitting.  This is the primary failure mode to address in prompt v1.
+  Score A/B: all False (failed run).  Run duration: ~9 minutes each (model
+  warm; cold-start would add 217.6s to first call only).
 
 ---
 
