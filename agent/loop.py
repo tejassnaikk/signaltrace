@@ -170,10 +170,9 @@ def _validate_submit_schema(args: Any) -> str | None:
         for field in ("entry_id", "direction", "strength"):
             if field not in c:
                 return f"claims[{i}] missing required field {field!r}"
-        if c["direction"] not in _DIRECTIONS:
-            return f"claims[{i}].direction must be one of {_DIRECTIONS}"
-        if c["strength"] not in _STRENGTHS:
-            return f"claims[{i}].strength must be one of {_STRENGTHS}"
+        # direction/strength values that are outside the allowed enums are
+        # NOT structural errors: they are rejected per-claim in _check_claims
+        # with reason invalid_direction / invalid_strength.
     if "narrative" not in args:
         return "missing required field 'narrative'"
     return None
@@ -196,6 +195,13 @@ def _check_claims(
         entry_id = c.get("entry_id", "")
         direction = c.get("direction", "")
         strength = c.get("strength", "")
+
+        if direction not in _DIRECTIONS:
+            rejected.append({**c, "reason": f"invalid_direction: {direction!r} not in {list(_DIRECTIONS)}"})
+            continue
+        if strength not in _STRENGTH_TO_VERDICT:
+            rejected.append({**c, "reason": f"invalid_strength: {strength!r} not in {list(_STRENGTH_TO_VERDICT)}"})
+            continue
 
         entry = by_id.get(entry_id)
         if entry is None:

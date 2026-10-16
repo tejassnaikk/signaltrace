@@ -33,12 +33,13 @@ class OllamaClient:
 
     def chat(self, messages: list[dict], tools: list[dict]) -> ChatResult:
         import ollama  # lazy import — server not contacted at import time
+        from agent.config import MODEL_TAG, OPTIONS, THINK
         resp = ollama.chat(
-            model=self._config["model_tag"],
+            model=MODEL_TAG,
             messages=messages,
             tools=tools or None,
-            options=self._config.get("options"),
-            think=self._config.get("think", False),
+            options=OPTIONS,
+            think=THINK,
         )
         msg = resp.message
         tool_calls = [

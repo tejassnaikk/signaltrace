@@ -685,6 +685,117 @@ _AGENT_DIR = os.path.join(
 )
 
 
+# ------------------------------------------------------------------ #
+# (h) Claim-level validation + OllamaClient model/options guarantee   #
+# ------------------------------------------------------------------ #
+
+def test_h_invalid_strength_rejected_not_malformed() -> None:
+    """A claim with strength='material_but_uncertain' is rejected per-claim (invalid_strength),
+    not treated as a structural malformed answer.  One valid claim in the same answer is accepted;
+    final status is 'ok', not 'failed_malformed'."""
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    session.test_dimension("sessions", "channel")
+    harness = session._harness_ledger()
+    valid_entry = next(e for e in harness.entries if e.verdict in ("strong", "plausible"))
+    valid_dir = _entry_direction(valid_entry)
+    valid_strength = _STRENGTH_MAP.get(valid_entry.verdict, "untested")
+
+    responses = [{
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {
+                "pattern": "localized",
+                "claims": [
+                    # Invalid strength — ledger verdict string, not a strength word
+                    {"entry_id": valid_entry.evidence_id, "direction": valid_dir,
+                     "strength": "material_but_uncertain"},
+                    # Valid claim
+                    {"entry_id": valid_entry.evidence_id, "direction": valid_dir,
+                     "strength": valid_strength},
+                ],
+                "narrative": "test",
+            },
+        }]
+    }]
+    result = run_agent(session, FakeClient(responses))
+    assert result["status"] == "ok", \
+        f"invalid_strength should not malform the answer; got {result['status']!r}"
+    assert result["n_rejected"] == 1, f"Expected 1 rejected, got {result['n_rejected']}"
+    assert any("invalid_strength" in r.get("reason", "") for r in result["rejected"]), \
+        f"Expected invalid_strength reason; got {result['rejected']}"
+    assert len(result["answer"]["claims"]) == 1, \
+        f"Valid claim should be accepted; got {result['answer']['claims']}"
+    con.close()
+
+
+def test_h_structural_error_still_triggers_malformed() -> None:
+    """submit_answer missing the required 'claims' field is structural → repair cycle
+    → failed_malformed after 3 attempts."""
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    bad = {"tool_calls": [{"name": "submit_answer",
+                           "args": {"pattern": "localized", "narrative": "no claims field"}}]}
+    result = run_agent(session, FakeClient([bad, bad, bad]))
+    assert result["status"] == "failed_malformed", \
+        f"Structural error should produce failed_malformed; got {result['status']!r}"
+    con.close()
+
+
+def test_h_ollama_client_model_and_options_present_on_every_call(monkeypatch) -> None:
+    """OllamaClient passes model=MODEL_TAG and options=OPTIONS on every ollama.chat() call,
+    including the call that follows a text turn (no tool_calls) + nudge."""
+    import ollama as _ollama_mod
+    from agent.llm import OllamaClient
+    from agent.config import MODEL_TAG, OPTIONS, config
+
+    calls: list[dict] = []
+
+    class _FakeTC:
+        class function:
+            name = "get_factor_decomposition"
+            arguments = {}
+
+    class _FakeMsg:
+        content = None
+        tool_calls = [_FakeTC()]
+
+    class _FakeResp:
+        message = _FakeMsg()
+        prompt_eval_count = 100
+        eval_count = 5
+
+    def _capture(**kwargs):
+        calls.append(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(_ollama_mod, "chat", _capture)
+
+    client = OllamaClient(config())
+
+    # Call 1: normal (tool call response)
+    client.chat([{"role": "user", "content": "investigate 2017-01-26"}], [])
+
+    # Call 2: messages include a text-turn assistant response (no tool_calls) + nudge,
+    # reproducing the path that previously caused HTTP 400 "model is required"
+    client.chat([
+        {"role": "user", "content": "investigate 2017-01-26"},
+        {"role": "assistant", "content": 'submit_answer("localized", [], "text turn")'},
+        {"role": "user", "content": "Please call one of the available tools."},
+    ], [])
+
+    assert len(calls) == 2, f"Expected 2 ollama.chat calls, got {len(calls)}"
+    for i, kw in enumerate(calls):
+        assert kw.get("model") == MODEL_TAG, \
+            f"call {i}: model={kw.get('model')!r}, expected {MODEL_TAG!r}"
+        assert kw.get("options") == OPTIONS, \
+            f"call {i}: options={kw.get('options')!r}, expected {OPTIONS}"
+
+
 def test_g_no_evaluation_imports() -> None:
     """agent/*.py files must not import from evaluation/ or mention 'heldout'."""
     for fname in os.listdir(_AGENT_DIR):
