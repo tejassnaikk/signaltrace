@@ -260,7 +260,7 @@ def _tool_msg(name: str, content: Any) -> dict:
 # Main loop                                                           #
 # ------------------------------------------------------------------ #
 
-_CONTEXT_GUARD_TOKENS = 8000  # stay below Ollama's observed 8194 effective limit
+_CONTEXT_GUARD_TOKENS = 13000  # n_ctx=16384 confirmed; max compact transcript 6828 tokens
 
 
 def run_agent(session, client, budget: int = 14,
@@ -296,10 +296,8 @@ def run_agent(session, client, budget: int = 14,
 
     try:
         while True:
-            # Context guard: fail loudly if conversation is about to exceed
-            # Ollama's effective context limit (observed ~8194 even with
-            # num_ctx=16384, likely due to model loaded before option took
-            # effect).  3 chars ≈ 1 token is a conservative estimate.
+            # Context guard: fail loudly before sending a request that would
+            # exceed the model's context.  3 chars ≈ 1 token (pessimistic).
             _ctx_chars = sum(len(json.dumps(m, default=str)) for m in messages)
             if _ctx_chars // 3 > context_limit:
                 status = "failed_context"
@@ -318,7 +316,9 @@ def run_agent(session, client, budget: int = 14,
             trace.append({
                 "event": "llm_response",
                 "content": resp.content,
-                "n_tool_calls": len(resp.tool_calls),
+                "tool_calls": list(resp.tool_calls),
+                "prompt_eval_count": resp.prompt_eval_count,
+                "eval_count": resp.eval_count,
             })
 
             if not resp.tool_calls:
@@ -402,6 +402,17 @@ def run_agent(session, client, budget: int = 14,
     except Exception:
         status = "failed_error"
         err = _tb.format_exc()
+        # Record what the message list looked like when the exception fired —
+        # lets us identify which request to Ollama triggered the error.
+        last_msg = messages[-1] if messages else {}
+        trace.append({
+            "event": "error",
+            "n_messages": len(messages),
+            "last_message_role": last_msg.get("role"),
+            "last_message_tool_name": last_msg.get("tool_name"),
+            "last_message_content_preview": (last_msg.get("content") or "")[:1000],
+            "last_message_tool_calls": last_msg.get("tool_calls"),
+        })
         return {
             "answer": None,
             "trace": trace,

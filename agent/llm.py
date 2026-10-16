@@ -11,10 +11,18 @@ from typing import Any
 class ChatResult:
     """Return value of client.chat()."""
 
-    def __init__(self, content: str | None, tool_calls: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        content: str | None,
+        tool_calls: list[dict[str, Any]],
+        prompt_eval_count: int | None = None,
+        eval_count: int | None = None,
+    ) -> None:
         self.content = content
         # Each element: {"name": str, "args": dict}
         self.tool_calls = tool_calls
+        self.prompt_eval_count = prompt_eval_count
+        self.eval_count = eval_count
 
 
 class OllamaClient:
@@ -37,7 +45,12 @@ class OllamaClient:
             {"name": tc.function.name, "args": dict(tc.function.arguments)}
             for tc in (msg.tool_calls or [])
         ]
-        return ChatResult(content=msg.content, tool_calls=tool_calls)
+        return ChatResult(
+            content=msg.content,
+            tool_calls=tool_calls,
+            prompt_eval_count=getattr(resp, "prompt_eval_count", None),
+            eval_count=getattr(resp, "eval_count", None),
+        )
 
 
 class FakeClient:
