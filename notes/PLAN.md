@@ -1044,6 +1044,79 @@ dies partway through is a real, not theoretical, risk.
   `test_h_no_note_when_no_immaterial`, `test_h_ledger_summary_compact`,
   `test_h_context_guard_fires`, `test_h_exhaustive_transcript_under_7000_tokens`.
 
+**[Amended 2026-10-16: claim-level validation, nudge-path bug fix, full trace capture, guard raised to 13,000]**
+
+- **Context guard raised to 13,000 tokens.**  `n_ctx_slot = 16384` confirmed
+  active; max exhaustive transcript is 6,828 tokens.  The previous 8,000
+  limit risked false `failed_context` on long but legitimate conversations.
+  `ChatResult` now carries `prompt_eval_count` and `eval_count` from Ollama;
+  `llm_response` trace events record full `tool_calls` list and both counts.
+
+- **Claim-level vs. structural validation (RATIONALE AND RULE).**  An agent
+  submitting `strength="material_but_uncertain"` has the correct evidence but
+  used a ledger verdict string instead of the agent strength word.  This is an
+  over-claimed weak row — the right outcome is a rejected claim, not a failed
+  answer.  `_validate_submit_schema` now only checks structural issues:
+  missing/wrong `pattern`, `claims` not a list, a claim missing
+  `entry_id`/`direction`/`strength`, or unparseable args.  Enum violations
+  (`direction` / `strength` values outside the allowed set) are handled in
+  `_check_claims` as `invalid_direction` / `invalid_strength` rejections.
+  The rest of the answer is kept; status is `ok`.  The repair cycle is
+  reserved for answers the loop cannot proceed with at all.
+
+- **Nudge-path HTTP 400 bug fixed.**  The `failed_error` on 2017-05-04 in
+  the previous re-run was caused by the model sending plain-text
+  `submit_answer(...)` (not a tool call) and then the subsequent nudge path
+  calling `ollama.chat()` with a missing model field.  Root cause:
+  `OllamaClient.chat()` read `self._config["model_tag"]` from the config dict
+  passed at construction; the path that followed a text turn could, in certain
+  message-list configurations, produce a 400 from Ollama.  Fix: `chat()` now
+  imports `MODEL_TAG`, `OPTIONS`, and `THINK` directly from `agent.config` at
+  call time, bypassing the stored dict entirely.  Every ollama.chat() call
+  goes through one code path that always includes the pinned model and options.
+
+- **Re-run after these fixes (`--limit 3`, `agent_dev_23ad1ff5_debug.jsonl`),
+  all on first 3 I1 dev dates.**
+
+  | date | status | tool_calls | n_rejected (loop) | max prompt_eval_count | wall time | Score A | Score B |
+  |------|--------|-----------|-------------------|-----------------------|-----------|---------|---------|
+  | 2017-01-26 | `ok` | gfd=1 td=9 gls=1 | 6 (invalid_strength) | 5,775 | ~84s | True | pat✓ top1✓ top3✓ |
+  | 2017-03-16 | `ok` | gfd=1 td=9 gls=1 | 5 (invalid_strength) | 5,329 | ~85s | True | pat✓ top1✓ top3✓ |
+  | 2017-05-04 | `failed_context` | gfd=1 td=9 gls=1 | 0 | 10,280 | ~18.5min | N/A | N/A |
+
+  **No HTTP 400 errors** in this run.  No new `truncating input prompt`
+  warnings (still exactly 4 total, all from the first plumbing run).
+
+  Runs 0–1 now score correctly: the model submitted claims with ledger
+  verdict strings as strengths; those were rejected per-claim
+  (`invalid_strength`), the single valid claim was accepted, and the answer
+  hit Score A and full Score B.
+
+  Run 2 (2017-05-04): the model generates the exact same 693-char plain-text
+  `submit_answer(...)` call on every turn (27 text turns, 27 nudges), with no
+  variation.  With the nudge-path bug fixed, the model runs indefinitely until
+  the context guard fires at ~10,280 prompt tokens.  The model's content
+  contains `"strength": "material_but_uncertain"` and
+  `"strength": "material_untested"` — showing the same strength-word confusion
+  as runs 0–1.  The plain-text call itself is **not** parseable JSON — it uses
+  positional Python function syntax (`submit_answer("localized", [...], "...")`)
+  rather than a tool call.  **Root cause (prompt v1 issue, not a harness bug):**
+  for this date, the model never transitions to calling `submit_answer` as a
+  tool call.  The nudge message ("Please call one of the available tools, or
+  call submit_answer to finish.") is not sufficient to change this behaviour.
+  This is the single issue to address in prompt v1.
+
+- **Rule going forward (PLAN.md 4.2 reconfirmed):** prompt changes driven by
+  this model behaviour count as new prompt versions (v1 onward).  Prompt v0
+  gets its full 41-date × 3-run dev evaluation unchanged before any v1 change
+  is introduced.  The two fixes in this amendment (claim-level validation,
+  nudge-path bug) are harness corrections, not prompt changes.
+
+- **Test count:** 196 passed (+3 from previous amendment).  New tests:
+  `test_h_invalid_strength_rejected_not_malformed`,
+  `test_h_structural_error_still_triggers_malformed`,
+  `test_h_ollama_client_model_and_options_present_on_every_call`.
+
 ---
 
 ## 4.2 Dev iteration protocol (pre-registered before any real-model run)
