@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import traceback
 from dataclasses import asdict
 
@@ -44,6 +45,20 @@ RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
+
+def _classify_rejection_reason(reason: str) -> str:
+    if reason.startswith("invalid_strength"):
+        return "invalid_strength"
+    if reason.startswith("invalid_direction"):
+        return "invalid_direction"
+    if reason.startswith("no ledger entry"):
+        return "unknown_entry"
+    if "contradicts entry sign" in reason:
+        return "direction_mismatch"
+    if "requires verdict" in reason:
+        return "verdict_mismatch"
+    return "other"
+
 
 def _build_out_path(results_dir: str, split: str, chash: str, limit) -> str:
     """Output path. --limit runs get a _debug suffix so they never touch the main file."""
@@ -246,8 +261,10 @@ def main(argv: list[str] | None = None) -> None:
 
     # Aggregate counters
     agg: dict[str, dict] = {
-        iid: {"n": 0, "sa_pass": {}, "sb_pat": 0, "sb_t1": 0, "sb_t3": 0,
-               "failed": 0, "checker_rejected": 0}
+        iid: {"n": 0, "status_counts": {}, "sa_pass": {},
+              "sb_pat": 0, "sb_t1": 0, "sb_t3": 0,
+              "failed": 0, "checker_rejected": 0,
+              "rejection_reasons": {}, "elapsed_times": []}
         for iid in INCIDENTS
     }
 
@@ -261,6 +278,7 @@ def main(argv: list[str] | None = None) -> None:
 
                 print(f"  {iid} {date} run={run} ... ", end="", flush=True)
 
+                t_start = time.time()
                 try:
                     con = build_incident_con(iid, date)
                     session = ToolSession(date, con)
@@ -279,6 +297,13 @@ def main(argv: list[str] | None = None) -> None:
                         "error": traceback.format_exc(),
                     }
                     scores = _score_run(result, iid, None)
+                elapsed_s = time.time() - t_start
+
+                # Classify per-claim rejection reasons for record and aggregate
+                rejected_reasons: dict[str, int] = {}
+                for rj in result.get("rejected", []):
+                    key = _classify_rejection_reason(rj.get("reason", ""))
+                    rejected_reasons[key] = rejected_reasons.get(key, 0) + 1
 
                 record = {
                     "incident_id": iid,
@@ -287,7 +312,9 @@ def main(argv: list[str] | None = None) -> None:
                     "status": result["status"],
                     "answer": result["answer"],
                     "n_rejected": result["n_rejected"],
+                    "rejected_reasons": rejected_reasons,
                     "tool_call_counts": result["tool_call_counts"],
+                    "elapsed_s": round(elapsed_s, 2),
                     "trace": result.get("trace", []),
                     "error": result.get("error"),
                     "score_a": scores["score_a"],
@@ -310,6 +337,10 @@ def main(argv: list[str] | None = None) -> None:
                 # Update aggregates
                 a = agg[iid]
                 a["n"] += 1
+                a["status_counts"][status_tag] = a["status_counts"].get(status_tag, 0) + 1
+                a["elapsed_times"].append(elapsed_s)
+                for rk, cnt in rejected_reasons.items():
+                    a["rejection_reasons"][rk] = a["rejection_reasons"].get(rk, 0) + cnt
                 if scores["failed_run"]:
                     a["failed"] += 1
                 else:
@@ -332,14 +363,22 @@ def main(argv: list[str] | None = None) -> None:
         if n == 0:
             continue
         parts = [f"{iid} n={n}"]
-        if a["failed"]:
-            parts.append(f"failed={a['failed']}")
+        # Status breakdown
+        sc = a["status_counts"]
+        parts.append("status=[" + " ".join(f"{k}:{v}" for k, v in sorted(sc.items())) + "]")
         parts.append(f"score_b_pattern={a['sb_pat']}/{n}")
         if a["sa_pass"]:
             for tgt, results in a["sa_pass"].items():
                 parts.append(f"score_a[{tgt}]={sum(results)}/{len(results)}")
+        if a["rejection_reasons"]:
+            rr = a["rejection_reasons"]
+            parts.append("rejected=[" + " ".join(f"{k}:{v}" for k, v in sorted(rr.items())) + "]")
         if a["checker_rejected"]:
             parts.append(f"checker_rejected={a['checker_rejected']}")
+        if a["elapsed_times"]:
+            mean_s = sum(a["elapsed_times"]) / len(a["elapsed_times"])
+            max_s = max(a["elapsed_times"])
+            parts.append(f"mean_s={mean_s:.1f} max_s={max_s:.1f}")
         print("  " + "  ".join(parts))
 
     print(f"\nOutput: {out_path}")

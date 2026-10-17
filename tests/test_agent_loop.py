@@ -746,6 +746,73 @@ def test_h_structural_error_still_triggers_malformed() -> None:
     con.close()
 
 
+# ------------------------------------------------------------------ #
+# (i) Text-turn cap and 20-turn hard cap                              #
+# ------------------------------------------------------------------ #
+
+def test_i_two_text_turns_fails_no_tool_call() -> None:
+    """A client that always returns text ends as failed_no_tool_call after exactly
+    2 consecutive text turns and never reaches the context guard."""
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    # Five text responses so FakeClient is not exhausted before the cap fires
+    responses = [{"content": "I will call submit_answer now."} for _ in range(5)]
+    result = run_agent(session, FakeClient(responses), context_limit=999_999)
+    assert result["status"] == "failed_no_tool_call", \
+        f"Expected failed_no_tool_call, got {result['status']!r}"
+    text_events = [e for e in result["trace"]
+                   if e.get("event") == "llm_response" and not e.get("tool_calls")]
+    assert len(text_events) == 2, \
+        f"Expected exactly 2 text turns before cap, got {len(text_events)}"
+    con.close()
+
+
+def test_i_text_then_tool_resets_counter() -> None:
+    """A text turn followed by a tool call resets the consecutive counter;
+    a second isolated text turn does not trigger failed_no_tool_call."""
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    responses = [
+        {"content": "let me think"},  # text (consecutive=1), nudge sent
+        {"tool_calls": [{"name": "test_dimension",
+                         "args": {"metric": "sessions", "dimension": "channel"}}]},
+        {"content": "let me think again"},  # text (consecutive reset to 1), nudge sent
+        {"tool_calls": [{"name": "submit_answer",
+                         "args": {"pattern": "none", "claims": [], "narrative": "done"}}]},
+    ]
+    result = run_agent(session, FakeClient(responses))
+    assert result["status"] == "ok", \
+        f"Counter should reset on tool call; got {result['status']!r}"
+    con.close()
+
+
+def test_i_20_turn_hard_cap_triggers_failed_budget() -> None:
+    """A run that makes exactly 20 LLM calls without finishing hits failed_budget
+    from the max_turns cap before the per-tool-call budget."""
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    # 25 repeated test_dimension calls; budget=25 so tool budget won't fire,
+    # but max_turns=20 fires after 20 calls
+    responses = [
+        {"tool_calls": [{"name": "test_dimension",
+                         "args": {"metric": "sessions", "dimension": "channel"}}]}
+        for _ in range(25)
+    ]
+    result = run_agent(session, FakeClient(responses), budget=25, max_turns=20)
+    assert result["status"] == "failed_budget", \
+        f"Expected failed_budget from max_turns cap, got {result['status']!r}"
+    llm_events = [e for e in result["trace"] if e.get("event") == "llm_response"]
+    assert len(llm_events) == 20, \
+        f"Expected exactly 20 LLM turns before cap, got {len(llm_events)}"
+    con.close()
+
+
 def test_h_ollama_client_model_and_options_present_on_every_call(monkeypatch) -> None:
     """OllamaClient passes model=MODEL_TAG and options=OPTIONS on every ollama.chat() call,
     including the call that follows a text turn (no tool_calls) + nudge."""

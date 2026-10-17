@@ -1117,6 +1117,44 @@ dies partway through is a real, not theoretical, risk.
   `test_h_structural_error_still_triggers_malformed`,
   `test_h_ollama_client_model_and_options_present_on_every_call`.
 
+**[Amended 2026-10-16: text-turn cap (failed_no_tool_call) and 20-turn hard cap]**
+
+- **Text-turn cap.**  After 2 consecutive text-only model turns (no tool call),
+  `run_agent()` returns `status = "failed_no_tool_call"`.  The first text turn
+  still sends one nudge (unchanged wording — the nudge text is part of the
+  prompt version and must not change under v0).  The cap fires on the second
+  consecutive text turn without a tool call.  The counter resets to 0 whenever
+  any tool call is received.
+
+  **Rationale:** The previous re-run on I1/2017-05-04 ran for 18.5 minutes
+  (27 consecutive text turns, 27 nudges, all identical) before the context
+  guard fired.  At temperature 0, the model produces the same output forever
+  once stuck.  Text turns did not count toward the tool-call budget, so the
+  context guard was the only bound — too expensive in time and context.  The
+  cap makes this failure mode cheap and explicit.
+
+- **20-turn hard cap.**  `run_agent()` now tracks total LLM calls (text + tool
+  calls).  Before each `client.chat()` call, if `total_llm_turns >= 20`,
+  returns `status = "failed_budget"`.  The exhaustive path with 2 repairs uses
+  at most 14 LLM calls; with the text-turn cap, a text loop adds at most 2
+  more = 16.  The 20-turn cap provides a second safety layer at minimal cost.
+
+- **Note on prompt version:**  The nudge wording ("Please call one of the
+  available tools, or call submit_answer to finish.") is frozen in v0.  Prompt
+  changes to address the text-turn failure mode count as v1 onward (PLAN.md
+  4.2).  Prompt v0 gets its full 41-date × 3-run dev evaluation first.
+
+- **Run summaries (run_agent.py) now report:**  per-status counts, rejected
+  claims broken down by reason (`invalid_strength`, `invalid_direction`,
+  `unknown_entry`, `direction_mismatch`, `verdict_mismatch`, `other`), and
+  mean/max seconds per run.  `elapsed_s` and `rejected_reasons` stored per
+  record.
+
+- **Test count:** 199 passed (+3 from previous amendment).  New tests:
+  `test_i_two_text_turns_fails_no_tool_call`,
+  `test_i_text_then_tool_resets_counter`,
+  `test_i_20_turn_hard_cap_triggers_failed_budget`.
+
 ---
 
 ## 4.2 Dev iteration protocol (pre-registered before any real-model run)

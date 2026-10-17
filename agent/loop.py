@@ -267,13 +267,16 @@ def _tool_msg(name: str, content: Any) -> dict:
 # ------------------------------------------------------------------ #
 
 _CONTEXT_GUARD_TOKENS = 13000  # n_ctx=16384 confirmed; max compact transcript 6828 tokens
+_MAX_LLM_TURNS = 20            # hard cap on total model turns (any kind) per run
+_MAX_CONSECUTIVE_TEXT_TURNS = 2  # consecutive text-only turns before failed_no_tool_call
 
 
 def run_agent(session, client, budget: int = 14,
-              context_limit: int = _CONTEXT_GUARD_TOKENS) -> dict:
+              context_limit: int = _CONTEXT_GUARD_TOKENS,
+              max_turns: int = _MAX_LLM_TURNS) -> dict:
     """Run the evidence-constrained agent loop.
 
-    Budget counts ALL tool calls including submit_answer and repair attempts.
+    Budget counts tool calls (including submit_answer and repair attempts).
     The exhaustive path (9 test_dimension + get_factor_decomposition +
     get_ledger_summary) plus 2 malformed repairs + 1 valid submit = 14 calls,
     which is exactly the default budget.
@@ -282,7 +285,8 @@ def run_agent(session, client, budget: int = 14,
         answer      : plain dict (pattern, claims, primary, narrative) or None
         trace       : list of event dicts
         tool_call_counts : session._call_counts_snapshot()
-        status      : "ok" | "failed_budget" | "failed_malformed" | "failed_context" | "failed_error"
+        status      : "ok" | "failed_budget" | "failed_malformed" |
+                      "failed_context" | "failed_no_tool_call" | "failed_error"
         n_rejected  : int — claims removed by the checker
         rejected    : list of rejected claim dicts with "reason"
         error       : str (traceback) for failed_error, else None
@@ -294,6 +298,8 @@ def run_agent(session, client, budget: int = 14,
 
     trace: list[dict] = []
     tc_total = 0
+    total_llm_turns = 0
+    consecutive_text_turns = 0
     malformed_count = 0
     n_rejected = 0
     rejected_all: list[dict] = []
@@ -302,6 +308,11 @@ def run_agent(session, client, budget: int = 14,
 
     try:
         while True:
+            # Hard cap: at most max_turns total model responses per run.
+            if total_llm_turns >= max_turns:
+                status = "failed_budget"
+                break
+
             # Context guard: fail loudly before sending a request that would
             # exceed the model's context.  3 chars ≈ 1 token (pessimistic).
             _ctx_chars = sum(len(json.dumps(m, default=str)) for m in messages)
@@ -310,6 +321,7 @@ def run_agent(session, client, budget: int = 14,
                 break
 
             resp = client.chat(messages, _TOOLS)
+            total_llm_turns += 1
 
             # Record assistant turn in messages
             asst_msg: dict = {"role": "assistant", "content": resp.content or ""}
@@ -328,7 +340,11 @@ def run_agent(session, client, budget: int = 14,
             })
 
             if not resp.tool_calls:
-                # No tool call — nudge the model back on track
+                consecutive_text_turns += 1
+                if consecutive_text_turns >= _MAX_CONSECUTIVE_TEXT_TURNS:
+                    status = "failed_no_tool_call"
+                    break
+                # One chance to recover — nudge the model back on track
                 nudge = (
                     "Please call one of the available tools, "
                     "or call submit_answer to finish."
@@ -337,6 +353,7 @@ def run_agent(session, client, budget: int = 14,
                 trace.append({"event": "nudge"})
                 continue
 
+            consecutive_text_turns = 0  # reset: this response had tool calls
             broke_out = False
             for tc in resp.tool_calls:
                 name = tc["name"]
@@ -400,7 +417,7 @@ def run_agent(session, client, budget: int = 14,
                     trace.append({"event": "tool_call", "name": name, "args": args})
 
             if status in ("ok", "failed_budget", "failed_malformed",
-                          "failed_context", "failed_error"):
+                          "failed_context", "failed_no_tool_call", "failed_error"):
                 break
             # If broke_out is True but status is None, the outer loop continues
             # (e.g. after a malformed submit repair was sent back)
