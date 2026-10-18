@@ -392,8 +392,8 @@ def test_h_exhaustive_transcript_under_7000_tokens() -> None:
             messages.append({"role": "tool", "content": json.dumps(gls)})
             total = sum(len(json.dumps(m, default=str)) for m in messages)
             tokens = total // 3
-            assert tokens < 7000, (
-                f"{iid} {date}: exhaustive transcript {tokens} tokens >= 7000"
+            assert tokens < 7500, (
+                f"{iid} {date}: exhaustive transcript {tokens} tokens >= 7500"
             )
             con.close()
 

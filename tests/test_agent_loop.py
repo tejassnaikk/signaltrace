@@ -875,3 +875,126 @@ def test_g_no_evaluation_imports() -> None:
             f"{fname} must not reference evaluation/"
         assert "heldout" not in source, \
             f"{fname} must not contain 'heldout'"
+
+
+# ------------------------------------------------------------------ #
+# (j) v1: claim_as column                                            #
+# ------------------------------------------------------------------ #
+
+def test_j_claim_as_matches_checker_mapping() -> None:
+    """render.verdict_to_claim_as and loop._STRENGTH_TO_VERDICT are consistent.
+
+    For every claimable verdict, verdict_to_claim_as(verdict) returns the
+    strength word that _STRENGTH_TO_VERDICT maps back to that same verdict.
+    For non-claimable verdicts, verdict_to_claim_as returns '-'.
+    """
+    from agent.render import verdict_to_claim_as, _VERDICT_TO_CLAIM_AS
+    from agent.loop import _STRENGTH_TO_VERDICT
+
+    # Every claimable verdict must round-trip through the two mappings
+    for verdict, strength in _VERDICT_TO_CLAIM_AS.items():
+        assert verdict_to_claim_as(verdict) == strength, \
+            f"verdict_to_claim_as({verdict!r}) should return {strength!r}"
+        assert _STRENGTH_TO_VERDICT.get(strength) == verdict, \
+            f"_STRENGTH_TO_VERDICT[{strength!r}] should be {verdict!r}"
+
+    # Non-claimable verdicts
+    for verdict in ("unsupported", "material_but_uncertain", "immaterial", "unknown"):
+        assert verdict_to_claim_as(verdict) == "-", \
+            f"verdict_to_claim_as({verdict!r}) should return '-'"
+
+
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_j_copying_claim_as_never_rejected_for_strength(iid: str, date: str) -> None:
+    """Copying a row's claim_as field as the strength is never rejected for invalid_strength.
+
+    Parametrized over all 41 dev dates.  For every non-immaterial row returned
+    by test_dimension, submitting claim_as as the strength must produce no
+    invalid_strength rejection.  Rows with claim_as '-' are skipped (not submitted).
+    """
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    claims_args = []
+
+    for m, d in all_pairs:
+        rows = session.test_dimension(m, d)
+        for row in rows:
+            if "claim_as" not in row or row["claim_as"] == "-":
+                continue
+            claims_args.append({
+                "entry_id": row["entry_id"],
+                "direction": row["direction"],
+                "strength": row["claim_as"],
+            })
+
+    if not claims_args:
+        pytest.skip(f"no claimable rows on {iid}/{date}")
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {"pattern": "localized", "claims": claims_args, "narrative": "claim_as test"},
+        }]
+    })
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok", f"{iid}/{date}: {result['status']}"
+    strength_rejections = [
+        r for r in result["rejected"]
+        if "invalid_strength" in r.get("reason", "")
+    ]
+    assert strength_rejections == [], \
+        f"{iid}/{date}: claim_as copied as strength was rejected: {strength_rejections}"
+    con.close()
+
+
+def test_j_dash_rows_rejected_if_claimed() -> None:
+    """A row with claim_as '-' is rejected when claimed (invalid_strength)."""
+    iid, date = _SCORE_DATES[0]  # I1/2017-01-26: sessions has unsupported rows
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    # Find a non-claimable, non-immaterial row (e.g. unsupported or material_but_uncertain)
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    dash_row = None
+    for m, d in all_pairs:
+        rows = session.test_dimension(m, d)
+        for row in rows:
+            if row.get("claim_as") == "-" and "entry_id" in row:
+                dash_row = row
+                break
+        if dash_row:
+            break
+
+    if dash_row is None:
+        pytest.skip("no non-claimable non-immaterial row found on this date")
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {
+                "pattern": "localized",
+                "claims": [{
+                    "entry_id": dash_row["entry_id"],
+                    "direction": dash_row["direction"],
+                    "strength": "strong",  # any strength word — entry verdict won't match
+                }],
+                "narrative": "dash row claim test",
+            },
+        }]
+    })
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok"
+    assert result["n_rejected"] >= 1, "Claim on '-' row should be rejected"
+    con.close()

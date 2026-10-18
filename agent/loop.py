@@ -17,6 +17,7 @@ import traceback as _tb
 from typing import Any
 
 from agent.prompt import SYSTEM_PROMPT
+from agent.render import _VERDICT_TO_CLAIM_AS
 from agent.tools import _row_direction
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
 
@@ -26,13 +27,9 @@ _PATTERNS = ("localized", "broad", "mix", "none")
 _DIRECTIONS = ("up", "down")
 _STRENGTHS = ("strong", "plausible", "untested", "exact")
 
-# Strength word → the ledger verdict it must match
-_STRENGTH_TO_VERDICT = {
-    "strong": "strong",
-    "plausible": "plausible",
-    "untested": "material_untested",
-    "exact": "arithmetic",
-}
+# Derived from render._VERDICT_TO_CLAIM_AS so the two cannot drift apart.
+# Maps strength word → the ledger verdict it must match.
+_STRENGTH_TO_VERDICT: dict[str, str] = {v: k for k, v in _VERDICT_TO_CLAIM_AS.items()}
 
 # ------------------------------------------------------------------ #
 # Tool schemas (JSON / function-calling format)                       #
@@ -346,8 +343,9 @@ def run_agent(session, client, budget: int = 14,
                     break
                 # One chance to recover — nudge the model back on track
                 nudge = (
-                    "Please call one of the available tools, "
-                    "or call submit_answer to finish."
+                    "Your last message was text, not a tool call. "
+                    "Call the submit_answer tool now with arguments pattern, "
+                    "claims and narrative, or call another tool."
                 )
                 messages.append({"role": "user", "content": nudge})
                 trace.append({"event": "nudge"})

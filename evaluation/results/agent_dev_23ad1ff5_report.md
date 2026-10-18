@@ -20,20 +20,20 @@ Total records: 123  |  Prompt version: v0  |  Config hash: 23ad1ff5
 
 ## b. Score A (within-dimension localization)
 
-Score A counts `pass/total` for ok runs only. Engine dev numbers are from evaluation/arm_neutral.py on the same 41 dev dates.
+Score A counts `pass/total` for **all runs** (failed_* runs count as failures, PLAN 4.1/5.5). Per-date: a date passes if ≥1 run passes; with deterministic runs this equals run counts / 3. Engine dev numbers are from evaluation/arm_neutral.py on the same 41 dev dates.
 
-| incident | target | agent | engine dev |
-|---|---|---|---|
-| I1 | sessions/channel/Organic Search | 6/6 | 5/5 |
-| I2 | conversion_rate/channel/Referral | 12/12 | 5/5 |
-| I3 | aov/channel/Direct | 0/12 | 5/5 |
-| I3b | aov/channel/Direct | 0/3 | 0/1 |
-| I4 | — (no Score A) | — | — |
-| I5 | conversion_rate/device/desktop | 12/15 | 4/5 |
-| I6 | — (no Score A) | — | — |
-| I7 | conversion_rate/channel/Referral | 15/15 | 5/5 |
-| I7 | sessions/channel/Organic Search | 15/15 | 5/5 |
-| C1 | — (no Score A) | — | — |
+| incident | target | agent runs | agent dates | engine dev |
+|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 6/15 | 2/5 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 12/15 | 4/5 | 5/5 |
+| I3 | aov/channel/Direct | 0/15 | 0/5 | 5/5 |
+| I3b | aov/channel/Direct | 0/3 | 0/1 | 0/1 |
+| I4 | — (no Score A) | — | — | — |
+| I5 | conversion_rate/device/desktop | 12/15 | 4/5 | 4/5 |
+| I6 | — (no Score A) | — | — | — |
+| I7 | conversion_rate/channel/Referral | 15/15 | 5/5 | 5/5 |
+| I7 | sessions/channel/Organic Search | 15/15 | 5/5 | 5/5 |
+| C1 | — (no Score A) | — | — | — |
 
 ## c. Score B (root-cause pattern / top-1 / top-3)
 
@@ -152,6 +152,7 @@ No dates with all 3 ok but differing answers — perfectly deterministic when su
 
 - Score B top-1: agent 6/15 (40%) vs engine 3/5 (60%)
 - Score B pattern: agent 6/15 (40%) vs engine 5/5 (100%)
+- Score A sessions/channel/Organic Search: agent 6/15 (40%) vs engine 5/5 (100%)
 
 **Failure reasons:**
 
@@ -167,6 +168,7 @@ excerpt 1: loop ended at nudge (no submit_answer)
 
 - Score B top-1: agent 9/15 (60%) vs engine 5/5 (100%)
 - Score B pattern: agent 12/15 (80%) vs engine 5/5 (100%)
+- Score A conversion_rate/channel/Referral: agent 12/15 (80%) vs engine 5/5 (100%)
 
 **Failure reasons:**
 
@@ -187,7 +189,7 @@ excerpt 2: pattern=localized; claims=[Organic Search sessions strong, Referral c
 
 - Score B top-1: agent 0/15 (0%) vs engine 3/5 (60%)
 - Score B pattern: agent 12/15 (80%) vs engine 5/5 (100%)
-- Score A aov/channel/Direct: agent 0/12 (0%) vs engine 5/5 (100%)
+- Score A aov/channel/Direct: agent 0/15 (0%) vs engine 5/5 (100%)
 
 **Failure reasons:**
 

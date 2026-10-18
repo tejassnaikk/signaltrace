@@ -132,19 +132,45 @@ def section_a(records: list[dict]) -> dict:
 
 
 def section_b(records: list[dict], engine: dict) -> dict:
-    """Score A per incident: agent counts vs engine dev counts."""
-    # Agent
-    agent: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: {"pass": 0, "n": 0}))
+    """Score A per incident: agent run + date counts vs engine dev counts.
+
+    All runs count toward the denominator — failed_* runs treated as Score A failures
+    (PLAN 4.1/5.5 pre-registered rule).  Per-date: a date passes if ≥1 run passes.
+    """
+    agent_runs: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: {"pass": 0, "n": 0}))
+    # (iid, date, tgt_key) -> True if ≥1 run on that date passed
+    _date_pass: dict[tuple[str, str, str], bool] = {}
+
     for r in records:
         iid = r["incident_id"]
+        date = r["date"]
         sa = r.get("score_a")
+        targets = TARGETS.get(iid)
+        if targets is None:
+            continue  # I4, I6, C1 — no Score A
+
         if sa is None:
-            continue
-        for k, v in sa.items():
-            tgt = _parse_sa_key(k)
-            agent[iid][str(tgt)]["n"] += 1
-            agent[iid][str(tgt)]["pass"] += int(v)
-    return {"agent": dict(agent), "engine": engine["sa"]}
+            # Failed run — count each target as a failure
+            for tgt in targets:
+                tgt_key = str(tgt)
+                agent_runs[iid][tgt_key]["n"] += 1
+                dk = (iid, date, tgt_key)
+                if dk not in _date_pass:
+                    _date_pass[dk] = False
+        else:
+            for k, v in sa.items():
+                agent_runs[iid][k]["n"] += 1
+                agent_runs[iid][k]["pass"] += int(v)
+                dk = (iid, date, k)
+                _date_pass[dk] = _date_pass.get(dk, False) or bool(v)
+
+    # Aggregate per-date counts
+    agent_dates: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: {"pass": 0, "n": 0}))
+    for (iid, date, tgt_key), passed in _date_pass.items():
+        agent_dates[iid][tgt_key]["n"] += 1
+        agent_dates[iid][tgt_key]["pass"] += int(passed)
+
+    return {"agent": dict(agent_runs), "agent_dates": dict(agent_dates), "engine": engine["sa"]}
 
 
 def section_c(records: list[dict], engine: dict) -> dict:
@@ -351,7 +377,7 @@ def section_h(records: list[dict], sb_data: dict, sa_data: dict) -> dict:
                     f"vs engine {e_pat}/{e_n} ({e_pat_rate:.0%})"
                 )
 
-        # Check Score A by rate (ok-runs denominator)
+        # Check Score A by rate (all-runs denominator)
         for tgt_key, eng_counts in engine_sa.get(iid, {}).items():
             ag_counts = agent_sa.get(iid, {}).get(tgt_key, {})
             e_pass = eng_counts["pass"]
@@ -457,25 +483,30 @@ def generate_report(
 
     # ── b. Score A ────────────────────────────────────────────────────────────
     w("## b. Score A (within-dimension localization)\n\n")
-    w("Score A counts `pass/total` for ok runs only. Engine dev numbers are from "
+    w("Score A counts `pass/total` for **all runs** (failed_* runs count as failures, "
+      "PLAN 4.1/5.5). Per-date: a date passes if ≥1 run passes; with deterministic runs "
+      "this equals run counts / 3. Engine dev numbers are from "
       "evaluation/arm_neutral.py on the same 41 dev dates.\n\n")
-    w("| incident | target | agent | engine dev |\n")
-    w("|---|---|---|---|\n")
+    w("| incident | target | agent runs | agent dates | engine dev |\n")
+    w("|---|---|---|---|---|\n")
     for iid in INCIDENTS:
         ag_sa = sa_data["agent"].get(iid, {})
+        ag_sa_d = sa_data["agent_dates"].get(iid, {})
         eng_sa = sa_data["engine"].get(iid, {})
         if not eng_sa and not ag_sa:
-            w(f"| {iid} | — (no Score A) | — | — |\n")
+            w(f"| {iid} | — (no Score A) | — | — | — |\n")
             continue
         all_tgts = sorted(set(list(ag_sa) + list(eng_sa)))
         for tgt_key in all_tgts:
             tgt = _parse_sa_key(tgt_key)
             label = f"{tgt[0]}/{tgt[1]}/{tgt[2]}"
             ag = ag_sa.get(tgt_key, {})
+            ag_d = ag_sa_d.get(tgt_key, {})
             eng = eng_sa.get(tgt_key, {})
             a_str = f"{ag.get('pass',0)}/{ag.get('n',0)}" if ag else "—"
+            a_d_str = f"{ag_d.get('pass',0)}/{ag_d.get('n',0)}" if ag_d else "—"
             e_str = f"{eng.get('pass',0)}/{eng.get('n',0)}" if eng else "—"
-            w(f"| {iid} | {label} | {a_str} | {e_str} |\n")
+            w(f"| {iid} | {label} | {a_str} | {a_d_str} | {e_str} |\n")
     w("\n")
 
     # ── c. Score B ────────────────────────────────────────────────────────────

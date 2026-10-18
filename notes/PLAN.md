@@ -1172,20 +1172,24 @@ Full report: `evaluation/results/agent_dev_23ad1ff5_report.md`.
 Per incident (ok / failed_no_tool_call): I1 6/9, I2 12/3, I3 12/3, I3b 3/0, I4 15/0,
 I5 15/0, I6 12/3, I7 15/0, C1 12/3.
 
-### b. Score A (ok runs; agent vs engine dev)
+### b. Score A (all runs; agent vs engine dev)
 
-| incident | target | agent | engine dev |
-|---|---|---|---|
-| I1 | sessions/channel/Organic Search | 6/6 | 5/5 |
-| I2 | conversion_rate/channel/Referral | 12/12 | 5/5 |
-| I3 | aov/channel/Direct | **0/12** | 5/5 |
-| I3b | aov/channel/Direct | 0/3 | 0/1 |
-| I5 | conversion_rate/device/desktop | 12/15 | 4/5 |
-| I7 | sessions/channel/Organic Search | 15/15 | 5/5 |
-| I7 | conversion_rate/channel/Referral | 15/15 | 5/5 |
+All runs count toward the denominator (failed_* treated as failures, PLAN 4.1/5.5).
+Per-date: a date passes if ≥1 run passes (= run counts / 3 with deterministic runs).
 
-I3's 0/12 is the single largest agent failure on ok runs: all 10 submitted claims
+| incident | target | agent runs | agent dates | engine dev |
+|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 6/15 | 2/5 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 12/15 | 4/5 | 5/5 |
+| I3 | aov/channel/Direct | **0/15** | 0/5 | 5/5 |
+| I3b | aov/channel/Direct | 0/3 | 0/1 | 0/1 |
+| I5 | conversion_rate/device/desktop | 12/15 | 4/5 | 4/5 |
+| I7 | sessions/channel/Organic Search | 15/15 | 5/5 | 5/5 |
+| I7 | conversion_rate/channel/Referral | 15/15 | 5/5 | 5/5 |
+
+I3's 0/15 is the single largest agent failure: all submitted claims
 rejected per run (all `invalid_strength`), leaving 0 accepted → Score A/top-1 both fail.
+I1 loses 9 runs to `failed_no_tool_call` (3 dates), dropping from 6/6 ok-only to 6/15 all-runs.
 
 ### c. Score B (all runs; agent vs engine dev)
 
@@ -1257,6 +1261,13 @@ Every prompt version is evaluated on **all 41 dev dates × 3 runs = 123
 runs**.  Debugging runs using `--limit` are permitted at any time but do not
 count toward version selection and are not reported.
 
+**Amendment 2026-10-18.** Dev versions v1–v4 use **1 run per date (41 runs per
+version)** instead of the pre-registered 3.  Justification: v0 measured 34/34
+all-ok dates with 3/3 identical answers at temperature 0 and fixed seed —
+repeats add no information on dev.  The final frozen configuration's held-out
+run keeps 3 runs per date as pre-registered, and determinism is re-measured
+there.  Cross-version comparisons use per-date counts.
+
 ### Think-mode comparison
 
 After the winning prompt version is chosen, **one** comparison run of
@@ -1300,6 +1311,40 @@ tagged is a protocol violation.
 Each full dev evaluation is approximately 123 agent runs.  On this machine
 with the local model, estimated wall time is **4–6 hours**.  Plan overnight
 runs; do not interrupt mid-evaluation.
+
+### Prompt version log
+
+#### v0 → v1 (2026-10-18)
+
+Changes (all motivated by v0 dev traces, no other changes made):
+
+1. **`agent/render.py`: `claim_as` column in `test_dimension` rows.**
+   Each non-immaterial row now carries a `claim_as` field: `strong`,
+   `plausible`, `untested`, `exact`, or `"-"` for non-claimable rows.
+   Derived from `_VERDICT_TO_CLAIM_AS` in `render.py`, which is also
+   imported by `loop.py` to build `_STRENGTH_TO_VERDICT` — one source of
+   truth, no drift possible.
+   *Motivation:* 729/729 rejected claims in v0 were `invalid_strength` —
+   the model copied ledger verdict strings verbatim instead of the four
+   agent-schema strength words.  I3 Score A: 0/15 (0/5 dates) as a result.
+
+2. **`agent/prompt.py`: replace verbose verdict→strength table; add submit
+   instruction.**
+   The old instruction (`strength must match the row's verdict: strong ->
+   "strong" ...`) replaced with: *"To claim a row, copy its claim_as value
+   as the strength. Rows with claim_as '-' cannot be claimed."*
+   Added: *"Finish by calling the submit_answer tool. Never write your
+   answer as text or as code."*
+   *Motivation:* same 729 invalid_strength rejections; 21/123 runs
+   (`failed_no_tool_call`, 7 dates) where model wrote text instead of
+   calling `submit_answer`.
+
+3. **`agent/loop.py`: nudge text.**
+   Changed from `"Please call one of the available tools, or call
+   submit_answer to finish."` to `"Your last message was text, not a tool
+   call. Call the submit_answer tool now with arguments pattern, claims and
+   narrative, or call another tool."`
+   *Motivation:* same 21 `failed_no_tool_call` runs.
 
 ---
 
