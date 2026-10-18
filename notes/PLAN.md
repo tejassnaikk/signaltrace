@@ -1157,6 +1157,90 @@ dies partway through is a real, not theoretical, risk.
 
 ---
 
+## 4.3 Dev results: prompt v0
+
+**123 runs (41 dev dates × 3 runs), config hash `23ad1ff5`, prompt version `v0`.**
+Full report: `evaluation/results/agent_dev_23ad1ff5_report.md`.
+
+### a. Status counts
+
+| status | count |
+|---|---|
+| ok | 102 |
+| failed_no_tool_call | 21 |
+
+Per incident (ok / failed_no_tool_call): I1 6/9, I2 12/3, I3 12/3, I3b 3/0, I4 15/0,
+I5 15/0, I6 12/3, I7 15/0, C1 12/3.
+
+### b. Score A (ok runs; agent vs engine dev)
+
+| incident | target | agent | engine dev |
+|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 6/6 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 12/12 | 5/5 |
+| I3 | aov/channel/Direct | **0/12** | 5/5 |
+| I3b | aov/channel/Direct | 0/3 | 0/1 |
+| I5 | conversion_rate/device/desktop | 12/15 | 4/5 |
+| I7 | sessions/channel/Organic Search | 15/15 | 5/5 |
+| I7 | conversion_rate/channel/Referral | 15/15 | 5/5 |
+
+I3's 0/12 is the single largest agent failure on ok runs: all 10 submitted claims
+rejected per run (all `invalid_strength`), leaving 0 accepted → Score A/top-1 both fail.
+
+### c. Score B (all runs; agent vs engine dev)
+
+| incident | agent pat | agent top-1 | agent top-3 | eng pat | eng top-1 | eng top-3 | note |
+|---|---|---|---|---|---|---|---|
+| I1 | 6/15 | 6/15 | 6/15 | 5/5 | 3/5 | 4/5 | |
+| I2 | 12/15 | 9/15 | 12/15 | 5/5 | 5/5 | 5/5 | |
+| I3 | 12/15 | 0/15 | 0/15 | 5/5 | 3/5 | 5/5 | |
+| I3b | 3/3 | 0/3 | 0/3 | 1/1 | 0/1 | 0/1 | |
+| I4 | 0/15 | 0/15 | 0/15 | 0/5 | 0/5 | 0/5 | broad by construction — engine also 0 |
+| I5 | 15/15 | 6/15 | 9/15 | 5/5 | 0/5 | 0/5 | agent beats engine on top-1 (device-dim) |
+| I6 | 0/15 | 0/15 | 0/15 | 0/5 | 0/5 | 0/5 | mix by construction — engine also 0 |
+| I7 | 15/15 | 15/15 | 15/15 | 5/5 | 4/5 | 5/5 | agent beats engine on top-1 |
+| C1 | 0/15 | — | — | 0/5 | — | — | correct pattern=none |
+
+I7 both-targets-in-top-3: agent **15/15**, engine 3/5.
+
+### d. C1: false positives and untested claims
+
+| arm | n runs | false positives | untested claims |
+|---|---|---|---|
+| agent | 15 | 6 | 0 |
+| engine dev | 5 | 1 | 13 |
+
+Agent emits no untested claims (model either accepts a valid entry_id or submits nothing);
+engine emits 13 (correctly reports decomposition-only rows as `material_untested`).
+Agent false-positive rate (6/15 = 0.4/run) is higher than engine (1/5 = 0.2/run).
+
+### e. Rejected claims
+
+729 total, all `invalid_strength`. The model copies ledger verdict strings verbatim
+instead of using the four agent-schema strength words (strong/plausible/untested/exact).
+
+| row verdict (inferred) | submitted strength | count | fix |
+|---|---|---|---|
+| material_but_uncertain | material_but_uncertain | 465 | row not claimable — omit claim |
+| material_untested | material_untested | 216 | use strength='untested' |
+| unsupported | unsupported | 33 | row not claimable — omit claim |
+| arithmetic | arithmetic | 15 | use strength='exact' |
+
+Per incident: I7=168, I3=120, I4=120, I6=102, C1=63, I2=69, I5=48, I1=33, I3b=6.
+
+### f. Tool calls per run
+
+Every run: test_dimension=9, get_factor_decomposition=1, get_ledger_summary=1 → total
+11 tool calls/run, exhaustive coverage every time. Total across 123 runs: td=1107, all=1353.
+
+### g. Determinism
+
+34/34 all-ok dates: 3/3 identical (100%). When the model succeeds, it is perfectly
+deterministic. 7 dates have all 3 runs failing `failed_no_tool_call` (3 I1 dates,
+1 I2, 1 I3, 1 I6, 1 C1).
+
+---
+
 ## 4.2 Dev iteration protocol (pre-registered before any real-model run)
 
 **Written 2026-10-07.  This section is a pre-registration: all rules are
