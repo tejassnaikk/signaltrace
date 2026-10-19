@@ -268,6 +268,7 @@ def main(argv: list[str] | None = None) -> None:
         for iid in INCIDENTS
     }
 
+    consecutive_failed_error = 0
     with open(out_path, "a", buffering=1) as fh:
         for iid, date in work:
             gt = load_ground_truth(iid)
@@ -295,6 +296,7 @@ def main(argv: list[str] | None = None) -> None:
                         "n_rejected": 0,
                         "rejected": [],
                         "error": traceback.format_exc(),
+                        "error_context": None,
                     }
                     scores = _score_run(result, iid, None)
                 elapsed_s = time.time() - t_start
@@ -317,6 +319,7 @@ def main(argv: list[str] | None = None) -> None:
                     "elapsed_s": round(elapsed_s, 2),
                     "trace": result.get("trace", []),
                     "error": result.get("error"),
+                    "error_context": result.get("error_context"),
                     "score_a": scores["score_a"],
                     "score_b": scores["score_b"],
                     "c1_claim_counts": scores["c1_claim_counts"],
@@ -333,6 +336,22 @@ def main(argv: list[str] | None = None) -> None:
 
                 status_tag = result["status"]
                 print(status_tag)
+
+                # Circuit breaker: 2 consecutive failed_error runs → stop.
+                # Both failing runs are already written; resuming later skips them.
+                if status_tag == "failed_error":
+                    consecutive_failed_error += 1
+                    if consecutive_failed_error >= 2:
+                        print(
+                            f"\nCircuit breaker: {consecutive_failed_error} consecutive "
+                            f"failed_error runs. Last error:\n"
+                            f"{result.get('error', '(none)')}\n"
+                            f"Fix the issue and resume with the same command.",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                else:
+                    consecutive_failed_error = 0
 
                 # Update aggregates
                 a = agg[iid]

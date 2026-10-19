@@ -5,8 +5,17 @@ FakeClient: replays a scripted list of responses for tests.
 """
 from __future__ import annotations
 
+import json
 from types import MappingProxyType
 from typing import Any
+
+
+class OllamaRequestError(RuntimeError):
+    """ollama ResponseError augmented with the request context for diagnostics."""
+
+    def __init__(self, message: str, context: dict) -> None:
+        super().__init__(message)
+        self.context = context  # model_sent, options_sent, n_messages, request_size_chars
 
 
 class ChatResult:
@@ -39,14 +48,39 @@ class OllamaClient:
 
     def chat(self, messages: list[dict], tools: list[dict]) -> ChatResult:
         import ollama  # lazy import — server not contacted at import time
+        from ollama import ResponseError
         from agent.config import MODEL_TAG, OPTIONS, THINK
-        resp = ollama.chat(
-            model=MODEL_TAG,
-            messages=messages,
-            tools=tools or None,
-            options=dict(OPTIONS),  # fresh dict each call; never passes shared ref
-            think=THINK,
-        )
+
+        model_tag = MODEL_TAG
+        if not isinstance(model_tag, str) or not model_tag:
+            raise RuntimeError(
+                f"OllamaClient.chat: model is {model_tag!r} — expected a "
+                f"non-empty str equal to the pinned tag; config may be corrupted"
+            )
+
+        options_copy = dict(OPTIONS)
+        n_messages = len(messages)
+        request_size_chars = sum(len(json.dumps(m, default=str)) for m in messages)
+
+        try:
+            resp = ollama.chat(
+                model=model_tag,
+                messages=messages,
+                tools=tools or None,
+                options=options_copy,  # fresh dict each call; never passes shared ref
+                think=THINK,
+            )
+        except ResponseError as e:
+            raise OllamaRequestError(
+                f"ollama ResponseError: {e}",
+                context={
+                    "model_sent": model_tag,
+                    "options_sent": options_copy,
+                    "n_messages": n_messages,
+                    "request_size_chars": request_size_chars,
+                },
+            ) from e
+
         msg = resp.message
         tool_calls = [
             {"name": tc.function.name, "args": dict(tc.function.arguments)}

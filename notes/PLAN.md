@@ -1351,20 +1351,37 @@ Changes (all motivated by v0 dev traces, no other changes made):
 The v1 dev run (`evaluation/results/agent_dev_f854dee9.jsonl`, 41 runs, 1 run
 per date) was invalidated by a harness bug and must be re-run in full.
 
-**Root cause.** `agent/config.py` exposed `OPTIONS` as a plain mutable `dict`.
+**Root cause (UNVERIFIED).** The most likely hypothesis is that
+`agent/config.py` exposed `OPTIONS` as a plain mutable `dict` and
 `OllamaClient.chat()` passed it by reference (`options=OPTIONS`) to
-`ollama.chat()`.  The pydantic `ChatRequest` model in the ollama library
-received this reference and, under a specific run path (I7 2017-02-08, 24
-submitted claims, 610 s), mutated it in place.  All 9 subsequent runs (4 I7,
-5 C1) failed on their first `ollama.chat()` call with HTTP 400 "model is
-required" in under 600 ms each.  Failures persist across runs because
-`OllamaClient` and `OPTIONS` are shared across the entire evaluation loop.
+`ollama.chat()`, which mutated it in place during the I7 2017-02-08 run (24
+submitted claims, 610 s), removing the `model` key.  All 9 subsequent runs
+then failed on their first `ollama.chat()` call with HTTP 400 "model is
+required" in under 600 ms each.  However, the exact mutation path through the
+ollama/pydantic library was not demonstrated: `model` and `options` are
+separate request fields, so a mutation of `OPTIONS` alone does not explain
+why `model` went missing.  The root cause remains unverified; the shared
+mutable reference is the only change that distinguishes the 610 s run from
+earlier runs.
 
-**The fix.**  `OPTIONS` is now `MappingProxyType` (immutable at the source) in
-`agent/config.py`.  `OllamaClient.__init__` stores `self._config` as a
-deeply-frozen `MappingProxyType`.  `OllamaClient.chat()` passes
-`options=dict(OPTIONS)` — a fresh plain dict copy on every call, so no
-library can store or mutate the shared reference.
+**Hardening (commit cf611c8).**  `OPTIONS` is now `MappingProxyType`
+(immutable at the source) in `agent/config.py`.  `OllamaClient.__init__`
+stores `self._config` as a deeply-frozen `MappingProxyType`.
+`OllamaClient.chat()` passes `options=dict(OPTIONS)` — a fresh plain dict
+copy on every call, so no library can store or mutate the shared reference.
+This is defensive hardening against the hypothesised mutation path, not a
+proven fix; the immutability change does not demonstrate that shared-reference
+mutation caused the 400.
+
+**Instrumentation (commit after cf611c8).**  To catch any recurrence in the
+act: `OllamaClient.chat()` asserts the model tag is a non-empty string before
+every call and raises a structured `OllamaRequestError` (with `model_sent`,
+`options_sent`, `n_messages`, `request_size_chars`, and `turn_index`) on any
+`ollama.ResponseError`.  `run_agent()` appends this context to the error
+string and returns it as `error_context` in the result dict.
+`evaluation/run_agent.py` writes `error_context` to the JSONL record and
+implements a circuit breaker: 2 consecutive `failed_error` runs stop the
+runner with a message naming the last error.
 
 **Invalid file retained.** `agent_dev_f854dee9.jsonl` renamed to
 `agent_dev_f854dee9_INVALID_harness_bug.jsonl` (kept for audit; not used in
@@ -1383,12 +1400,20 @@ the held-out run is executed exactly once.  Both the invalidated file and the
 replacement file are retained in `evaluation/results/` and both are reported
 in PLAN.md, clearly labelled invalid and replacement respectively.
 
-**Test.** `test_k_config_frozen_single_client_reused_across_runs` verifies:
+**Tests.**  `test_k_config_frozen_single_client_reused_across_runs` verifies:
 (1) `OPTIONS` is `MappingProxyType`; (2) `OllamaClient._config` is
 `MappingProxyType`; (3) mutations to either raise `TypeError`; (4) every
 `ollama.chat()` call across all unusual paths receives a fresh options copy
 (`kw["options"] is not OPTIONS`) with correct values.  The test fails on old
 code (plain mutable dict) and passes on the fixed code.
+`test_l_pre_call_assertion_fires_on_empty_or_none_model` verifies that the
+pre-call guard raises `RuntimeError` when `MODEL_TAG` is `""` or `None`.
+`test_l_response_error_produces_error_context_with_turn_index` verifies that
+a mocked `ResponseError` produces a result with `error_context` containing all
+required fields including `turn_index`.
+`test_l_circuit_breaker_stops_on_two_consecutive_failed_error` and
+`test_l_circuit_breaker_one_error_then_ok_does_not_stop` verify the circuit
+breaker behaviour.
 
 ---
 

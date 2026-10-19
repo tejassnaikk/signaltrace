@@ -16,6 +16,7 @@ import json
 import traceback as _tb
 from typing import Any
 
+from agent.llm import OllamaRequestError
 from agent.prompt import SYSTEM_PROMPT
 from agent.render import _VERDICT_TO_CLAIM_AS
 from agent.tools import _row_direction
@@ -420,9 +421,21 @@ def run_agent(session, client, budget: int = 14,
             # If broke_out is True but status is None, the outer loop continues
             # (e.g. after a malformed submit repair was sent back)
 
-    except Exception:
+    except Exception as _exc:
         status = "failed_error"
         err = _tb.format_exc()
+        # If this was an OllamaRequestError, append the request context (including
+        # the turn index at the moment of failure) to the error string and return
+        # it as a structured dict so run_agent.py can write it to the JSONL record.
+        error_ctx: dict | None = None
+        if isinstance(_exc, OllamaRequestError):
+            _exc.context["turn_index"] = total_llm_turns
+            err += (
+                "\n--- Ollama request context ---\n"
+                + json.dumps(_exc.context, indent=2, default=str)
+                + "\n"
+            )
+            error_ctx = dict(_exc.context)
         # Record what the message list looked like when the exception fired —
         # lets us identify which request to Ollama triggered the error.
         last_msg = messages[-1] if messages else {}
@@ -442,6 +455,7 @@ def run_agent(session, client, budget: int = 14,
             "n_rejected": n_rejected,
             "rejected": rejected_all,
             "error": err,
+            "error_context": error_ctx,
         }
 
     return {
@@ -452,4 +466,5 @@ def run_agent(session, client, budget: int = 14,
         "n_rejected": n_rejected,
         "rejected": rejected_all,
         "error": None,
+        "error_context": None,
     }

@@ -1137,3 +1137,86 @@ def test_k_config_frozen_single_client_reused_across_runs(monkeypatch) -> None:
             f"call {i}: options must be a fresh copy, not the shared OPTIONS object"
         assert kw.get("options") == expected_options, \
             f"call {i}: options={kw.get('options')!r}, expected {expected_options}"
+
+
+# ------------------------------------------------------------------ #
+# test_l: pre-call assertion + ResponseError context capture          #
+# ------------------------------------------------------------------ #
+
+def test_l_pre_call_assertion_fires_on_empty_or_none_model(monkeypatch) -> None:
+    """OllamaClient.chat() raises RuntimeError when MODEL_TAG is '' or None."""
+    import agent.config as _cfg_mod
+    import ollama as _ollama_mod
+    from agent.config import config as _config_fn
+    from agent.llm import OllamaClient
+
+    client = OllamaClient(_config_fn())
+
+    # Patch ollama.chat so it would never be called on the empty/None path
+    monkeypatch.setattr(_ollama_mod, "chat", lambda **kw: (_ for _ in ()).throw(
+        AssertionError("ollama.chat must not be reached after pre-call guard fires")
+    ))
+
+    for bad_model in ("", None):
+        monkeypatch.setattr(_cfg_mod, "MODEL_TAG", bad_model)
+        with pytest.raises(RuntimeError, match="model is"):
+            client.chat([{"role": "user", "content": "test"}], [])
+
+
+def test_l_response_error_produces_error_context_with_turn_index(monkeypatch) -> None:
+    """ResponseError on the 2nd ollama.chat call produces a result with error_context.
+
+    Verified fields: model_sent, options_sent, n_messages, request_size_chars,
+    turn_index (added by loop.py).  The error string also contains the context block.
+    """
+    import ollama as _ollama_mod
+    from agent.config import config as _config_fn, MODEL_TAG, OPTIONS
+    from agent.llm import OllamaClient
+    from evaluation.injector import build_incident_con
+
+    class _FakeTC:
+        class function:
+            name = "get_factor_decomposition"
+            arguments = {}
+
+    class _FakeMsg:
+        content = None
+        tool_calls = [_FakeTC()]
+
+    class _FakeResp:
+        message = _FakeMsg()
+        prompt_eval_count = 50
+        eval_count = 5
+
+    call_count = [0]
+
+    def _first_ok_then_error(**kwargs):
+        call_count[0] += 1
+        if call_count[0] >= 2:
+            from ollama import ResponseError
+            raise ResponseError("model is required", 400)
+        return _FakeResp()
+
+    monkeypatch.setattr(_ollama_mod, "chat", _first_ok_then_error)
+
+    client = OllamaClient(_config_fn())
+    con = build_incident_con("I1", "2017-01-26")
+    session = ToolSession("2017-01-26", con)
+
+    result = run_agent(session, client)
+    con.close()
+
+    assert result["status"] == "failed_error"
+
+    ctx = result["error_context"]
+    assert ctx is not None, "error_context must be present for OllamaRequestError"
+    assert ctx["model_sent"] == MODEL_TAG
+    assert ctx["options_sent"] == dict(OPTIONS)
+    assert isinstance(ctx["n_messages"], int) and ctx["n_messages"] > 0
+    assert isinstance(ctx["request_size_chars"], int) and ctx["request_size_chars"] > 0
+    # turn_index 1 = second call (0-indexed): first call succeeded, so total_llm_turns=1
+    assert ctx["turn_index"] == 1
+
+    # Error string must contain the embedded context block
+    assert "--- Ollama request context ---" in result["error"]
+    assert "turn_index" in result["error"]
