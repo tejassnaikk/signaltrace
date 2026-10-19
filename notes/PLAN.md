@@ -1974,6 +1974,30 @@ Every change is explained by one of two reasons:
 
 ---
 
+## 4.6 Prompt v3 (ablation: v1 prompt + v2 rendering)
+
+**Rationale:** v2 introduced two independent changes: (1) the citable/context rendering
+split (`agent/render.py`) which dropped rejected claims from 246 to 0; and (2) a rewrite
+of the PATTERNS section which caused the model to submit `pattern=mix` on 40/41 dates,
+collapsing Score B top-1 from 16 to 1.  v3 isolates the rendering fix from the pattern
+rewrite to determine whether the rendering change alone recovers v1's Score B while
+eliminating the rejected claims.
+
+**Construction:** v1's system prompt text (`2ff263c`) with only the TOOLS section
+updated to describe the two-block output (`Citable rows` / `Context rows`), `short_id`,
+and the `evidence` field — exactly v2's TOOLS section.  The PATTERNS section, READING
+THE EVIDENCE section, and all nudge text are byte-identical to v1.  `agent/render.py`
+is v2's (citable/context split unchanged).  The 8999240 line ("Contributions can exceed
+100% or be negative…") is kept.
+
+**Expected:** rejected claims = 0 (from rendering); Score B top-1 close to v1's 16
+(from PATTERNS).  If Score B regresses, the rendering change itself (not only the
+pattern rewrite) contributed to the v2 collapse.
+
+**Slot:** v4 is the last prompt slot, followed by one think on/off test on the winner.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,

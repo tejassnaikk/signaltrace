@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -1386,3 +1387,38 @@ def test_m_evidence_as_strength_never_rejected(iid: str, date: str) -> None:
         f"{iid}/{date}: evidence copied as strength was rejected: {strength_rejections}"
     )
     con.close()
+
+
+# ------------------------------------------------------------------ #
+# (n) v3: ablation — PATTERNS section byte-identical to v1           #
+# ------------------------------------------------------------------ #
+
+def test_n_v3_patterns_identical_to_v1() -> None:
+    """v3 PATTERNS section is byte-identical to v1's.
+
+    v3 is an ablation: v1 prompt + v2 rendering.  The only TOOLS section
+    changed; PATTERNS must not drift from v1.
+    """
+    import re
+    import subprocess
+
+    v1_source = subprocess.check_output(
+        ["git", "show", "2ff263c:agent/prompt.py"],
+        cwd=str(Path(__file__).parent.parent),
+    ).decode()
+
+    from agent.prompt import SYSTEM_PROMPT as v3_prompt, VERSION as v3_version
+    assert v3_version == "v3", f"Expected VERSION='v3', got {v3_version!r}"
+
+    def extract_patterns(prompt: str) -> str:
+        m = re.search(r"(PATTERNS\n.*?)(?=\n[A-Z])", prompt, re.DOTALL)
+        assert m, "PATTERNS section not found"
+        return m.group(1)
+
+    v1_prompt = re.search(r'SYSTEM_PROMPT = """\\\n(.*?)"""', v1_source, re.DOTALL)
+    assert v1_prompt, "Could not extract v1 SYSTEM_PROMPT"
+    v1_text = v1_prompt.group(1)
+
+    assert extract_patterns(v1_text) == extract_patterns(v3_prompt), (
+        "v3 PATTERNS section differs from v1"
+    )
