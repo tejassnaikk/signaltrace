@@ -28,6 +28,7 @@ get_ledger_summary(): compact list of citable entries recorded so far: short_id 
 submit_answer(pattern, claims, narrative): ends the investigation.
   claims: a ranked list, most important first. Your first claims are treated as your main conclusions. Each claim is {entry_id, direction, strength}.
   Use short_id as entry_id. Copy evidence as strength. An empty claims list is allowed.
+Contributions can exceed 100% or be negative because segments offset each other; read them together, not one row at a time.
 Finish by calling the submit_answer tool. Never write your answer as text or as code.
 
 You have at most 14 tool calls in total, including submit_answer.
@@ -50,7 +51,7 @@ decomposition_only: aov is an average order value and no valid test exists for i
 PATTERNS
 The pattern describes the cause behind your FIRST claim, not everything you saw.
 localized: one or a few specific segments' own counts or rates explain the main change.
-mix: the main change comes from traffic weight shifting between segments: a mix row carries more of the metric's change than any single segment's row. Your first claim cites that mix row.
+mix: the main change comes from traffic weight shifting between segments: a mix row explains most of the metric's change. Your first claim cites that mix row.
 broad: the main change is spread across many segments in every dimension, roughly in proportion to their size, with no single row explaining most of it.
 none: the evidence does not support a real cause; the movement looks like normal noise. Claims may be empty.
 

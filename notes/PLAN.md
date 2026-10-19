@@ -1470,6 +1470,37 @@ Changes (both motivated by v1 dev traces, no other changes made):
   improvement is a side-effect, not the motivation, and C1's scoring is measured
   as-is after the v2 run.
 
+#### v2 pre-run amendment (2026-10-19)
+
+**Before any v2 model run was started**, the mix rule in PATTERNS was found to
+contradict the rendered data:
+
+The v2 mix definition said "a mix row carries more of the metric's change than
+any single segment's row."  The rendered I6 2016-11-04 example (conversion_rate ×
+device) shows the mix row at contribution 0.975 and desktop's within row at 2.199
+— the mix row does NOT exceed the largest segment row.  The contradiction arises
+because per-segment contributions are `within_share` only (excluding mix and the
+interaction term), so segment rows and the mix row do not compete on the same
+scale.  Shares exceed 1.0, and can individually exceed the mix row, because
+segments offset each other and the interaction term is not shown.
+
+**Interaction term availability**: `ratio_decomposition` (attribution.py) computes
+`inter.sum()` but `validate_segments` stores only `mix_total` and `within_total`
+in the MIX Result's `detail` string.  `interaction_total` is discarded before
+`investigate()` returns — it is not in any Result field or in the dict the agent
+sees.  No interaction line added to the render; adding it would require changing
+the frozen engine.
+
+**Changes made (commit committed before any v2 run):**
+
+1. `agent/prompt.py` PATTERNS — mix line changed to: "a mix row explains most of
+   the metric's change."  The comparison against segment rows is removed.
+2. `agent/prompt.py` TOOLS — added one line: "Contributions can exceed 100% or
+   be negative because segments offset each other; read them together, not one
+   row at a time."
+
+VERSION stays "v2".  No model runs had occurred; no dev data was consulted.
+
 ---
 
 ## 4.4 Dev results: prompt v1
