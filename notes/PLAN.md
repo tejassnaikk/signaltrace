@@ -1417,6 +1417,222 @@ breaker behaviour.
 
 ---
 
+## 4.4 Dev results: prompt v1
+
+**41 runs (41 dev dates × 1 run), config hash `f854dee9`, prompt version `v1`.**
+Full report: `evaluation/results/agent_dev_f854dee9_report.md`.
+
+Run executed at commit `cf611c8`; instrumentation commit `37de460` was made
+mid-run (harness only — no model, prompt, or config changes).
+
+### Determinism: invalid run vs rerun
+
+32 dates completed `ok` in the INVALID file before the HTTP 400 failures.
+All 32 compare identically to the rerun: same pattern, same ordered accepted
+claims, same rejected-claim counts.  I7 2017-02-08 (610 s in the invalid run,
+157 s in the rerun): identical answers — same pattern (`localized`), same 4
+accepted claims, same 20 rejected claims, same token counts (prompt=45 724,
+eval=936).  The 453-second difference was wallclock stall, not model variation.
+
+### a. Status counts
+
+**v0:** 34 ok, 7 `failed_no_tool_call` (per-date: 41 total).
+**v1:** 41 ok, 0 failed.  All `failed_no_tool_call` dates resolved.
+
+| incident | v0 ok | v0 fail | v1 ok | v1 fail |
+|---|---|---|---|---|
+| I1 | 2 | 3 | 5 | 0 |
+| I2 | 4 | 1 | 5 | 0 |
+| I3 | 4 | 1 | 5 | 0 |
+| I3b | 1 | 0 | 1 | 0 |
+| I4 | 5 | 0 | 5 | 0 |
+| I5 | 5 | 0 | 5 | 0 |
+| I6 | 4 | 1 | 5 | 0 |
+| I7 | 5 | 0 | 5 | 0 |
+| C1 | 4 | 1 | 5 | 0 |
+
+### b. Score A per incident (dates out of 5, I3b out of 1)
+
+All runs count toward denominator.  v0 and v1 use 1 run per date (v0 per-date
+= first of 3 identical runs).
+
+| incident | target | v0 dates | v1 dates | engine dev |
+|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 2/5 | 5/5 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 4/5 | 4/5 | 5/5 |
+| I3 | aov/channel/Direct | 0/5 | 4/5 | 5/5 |
+| I3b | aov/channel/Direct | 0/1 | 0/1 | 0/1 |
+| I5 | conversion_rate/device/desktop | 4/5 | 4/5 | 4/5 |
+| I7 | sessions/channel/Organic Search | 5/5 | 5/5 | 5/5 |
+| I7 | conversion_rate/channel/Referral | 5/5 | 5/5 | 5/5 |
+
+I1 +3 dates (failed_no_tool_call → ok).  I3 +4 dates (0 → 4;
+`claim_as` column fixed the all-invalid_strength failure).
+
+### c. Score B per incident (pattern / top-1 / top-3)
+
+| inc | v0 pat | v0 t1 | v0 t3 | v1 pat | v1 t1 | v1 t3 | eng pat | eng t1 | eng t3 |
+|---|---|---|---|---|---|---|---|---|---|
+| I1 | 2/5 | 2/5 | 2/5 | 5/5 | 5/5 | 5/5 | 5/5 | 3/5 | 4/5 |
+| I2 | 4/5 | 3/5 | 4/5 | 5/5 | 2/5 | 4/5 | 5/5 | 5/5 | 5/5 |
+| I3 | 4/5 | 0/5 | 0/5 | 5/5 | 2/5 | 3/5 | 5/5 | 3/5 | 5/5 |
+| I3b | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 |
+| I4 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I5 | 5/5 | 2/5 | 3/5 | 5/5 | 2/5 | 3/5 | 5/5 | 0/5 | 0/5 |
+| I6 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 4/5 | 5/5 |
+| C1 | 0/5 | — | — | 0/5 | — | — | 0/5 | — | — |
+
+I7 both-targets-in-top-3: v0 5/5 · v1 5/5 · engine 3/5.
+
+I4 (broad), I6 (mix), C1 (none): agent submits `localized` on all dates in
+both v0 and v1.  Pattern score 0 in both versions — the agent never outputs
+broad, mix, or none.
+
+### d. C1: false positives and untested claims
+
+| arm | n runs | false positives | untested claims |
+|---|---|---|---|
+| v0 agent | 5 | 2 | 0 |
+| v1 agent | 5 | 4 | 3 |
+| engine dev | 5 | 1 | 13 |
+
+v1 agent FP rate increased (2→4) despite fix, untested-claim rate rose from 0
+to 3.  Engine emits 13 untested because it correctly reports decomposition-only
+rows.
+
+### e. Rejected claims
+
+| version | total | invalid_strength | verdict_mismatch | new reason? |
+|---|---|---|---|---|
+| v0 | 243 | 243 | 0 | — |
+| v1 | 246 | 200 | 46 | verdict_mismatch (new) |
+
+`verdict_mismatch` is new in v1: the model uses a valid strength word (e.g.,
+`untested`) but the entry's actual verdict does not match (e.g., the entry
+has `material_but_uncertain`, not `material_untested`).  This indicates the
+model is partially reading `claim_as` but still mistreating some rows.
+
+Top (row verdict inferred, claimed strength) pairs in v1:
+
+| rank | row verdict (inferred) | claimed strength | count | fix |
+|---|---|---|---|---|
+| 1 | material_but_uncertain | material_but_uncertain | 115 | row not claimable — omit |
+| 2 | material_untested | material_untested | 61 | use `untested` |
+| 3 | unsupported | unsupported | 12 | row not claimable — omit |
+| 4 | arithmetic | arithmetic | 6 | use `exact` |
+| 5 | non-claimable | `-` (literal) | 6 | row not claimable — omit |
+
+v1 per incident (invalid_strength / verdict_mismatch / total):
+I1 24/0/24, I2 28/0/28, I3 20/22/42, I3b 3/0/3, I4 29/16/45,
+I5 14/0/14, I6 33/0/33, I7 35/0/35, C1 14/8/22.
+
+### f. Pattern distribution
+
+The agent never submits `broad`, `mix`, or `none` in v0 or v1.
+
+| pattern | v0 (41 dates) | v1 (41 dates) |
+|---|---|---|
+| localized | 34 | 41 |
+| broad | 0 | 0 |
+| mix | 0 | 0 |
+| none | 0 | 0 |
+| no_answer (failed run) | 7 | 0 |
+
+For I4 (correct=broad), I6 (correct=mix), C1 (correct=none):
+- I4: v0 localized=5, v1 localized=5
+- I6: v0 localized=4 (1 no_answer), v1 localized=5
+- C1: v0 localized=4 (1 no_answer), v1 localized=5
+
+### g. Date-level changes between v0 and v1
+
+11 dates changed.  All changes are gains except one loss.
+
+| incident | date | change |
+|---|---|---|
+| I1 | 2017-05-04 | ScoreA +GAIN; ScoreB pattern +GAIN; top-1 +GAIN; top-3 +GAIN; status fail→ok |
+| I1 | 2017-06-13 | ScoreA +GAIN; ScoreB pattern +GAIN; top-1 +GAIN; top-3 +GAIN; status fail→ok |
+| I1 | 2017-07-05 | ScoreA +GAIN; ScoreB pattern +GAIN; top-1 +GAIN; top-3 +GAIN; status fail→ok |
+| I2 | 2016-10-25 | ScoreB pattern +GAIN; status fail→ok |
+| I2 | 2016-11-14 | ScoreB top-1 -LOSS |
+| I3 | 2016-11-21 | ScoreA +GAIN; ScoreB top-1 +GAIN; top-3 +GAIN |
+| I3 | 2017-02-27 | ScoreA +GAIN; ScoreB top-3 +GAIN |
+| I3 | 2017-03-30 | ScoreA +GAIN; ScoreB top-1 +GAIN; top-3 +GAIN |
+| I3 | 2017-05-01 | ScoreA +GAIN; ScoreB pattern +GAIN; status fail→ok |
+| I6 | 2017-01-11 | status fail→ok |
+| C1 | 2016-11-10 | status fail→ok |
+
+Only loss: I2 2016-11-14 ScoreB top-1 (v1 submits 2 claims with
+desktop/conversion_rate first instead of Referral first; 11 other claims
+rejected as invalid_strength, leaving Referral ranked second).
+
+### h. Failure analysis (v1 only)
+
+Incidents still below engine on Score A or Score B (by rate):
+
+**I2** — ScoreB top-1 agent 2/5 (40%) vs engine 5/5 (100%);
+ScoreA agent 4/5 (80%) vs engine 5/5 (100%).
+
+3 dates fail top-1.  Failure pattern (3/3): `ok_but_wrong_answer` — answer is
+submitted successfully but the top-ranked primary claim is not
+conversion_rate/channel/Referral.
+- 2016-10-25: primary is sessions/channel/Social + sessions/country/Thailand
+  (11 accepted, 1 rejected).  Referral target is missing from primary list
+  because the agent focuses on sessions, not conversion_rate, when both
+  move on the same date.
+- 2016-11-14: primary is desktop/conversion_rate (strong) then Referral/
+  conversion_rate (plausible); only 2 accepted (11 rejected invalid_strength).
+  Referral is ranked second; top-1 requires it first.
+- 2017-05-22: primary is Organic Search sessions + Referral conversion_rate
+  + United States conversion_rate; all 4 accepted, 0 rejected.  Referral is
+  in primary but not ranked first.
+
+**I3** — ScoreB top-1 agent 2/5 (40%) vs engine 3/5 (60%);
+ScoreA agent 4/5 (80%) vs engine 5/5 (100%).
+
+3 dates fail top-1.  Failure pattern (3/3): `ok_but_wrong_answer`.
+- 2017-03-10: 0 accepted (16 rejected `invalid_strength`).  Model submits
+  `material_but_uncertain` for all 16 claims — ignores `claim_as` column
+  entirely on this date.
+- 2017-02-27: 5 accepted, 9 rejected (`verdict_mismatch`).  Model uses
+  `untested` strength on entries whose verdict is `material_but_uncertain`
+  (wrong mapping).  Primary claims include `arithmetic` and `material_untested`
+  (invalid strings), meaning the `claim_as` column is read inconsistently.
+- 2017-05-01: 8 accepted, 4 rejected.  Primary is conversion_rate/channel/
+  Direct (strong), not aov/channel/Direct — the I3 target.  Model prioritises
+  conversion_rate evidence over aov even when aov evidence is present and
+  accepted.
+
+**I4, I6, C1 — pattern always `localized`** (both v0 and v1, 5/5 dates each).
+The agent cites only the single largest-moving segment per dimension
+regardless of how many dimensions are affected simultaneously.
+- I4 narratives: "primarily driven by the Social channel, desktop device, and
+  several countries" — broad cross-dimension movement described but pattern
+  still set to `localized`.
+- I6 narratives: cites Social, desktop, mobile, Referral, United States across
+  multiple dimensions — classic mix description but pattern still `localized`.
+- C1 narratives: "sessions increase localized to Social, Desktop, Vietnam…
+  conversion rate decrease due to Referral and desktop" — two opposing
+  directions cited but pattern still `localized`.
+
+The model treats `localized` as the default.  The prompt and schema provide
+no guidance on when to choose broad, mix, or none.  This is the highest-
+priority gap for v2.
+
+**Why are claims still rejected when `claim_as` is shown?**
+Two failure modes persist:
+1. **Invalid-strength ignored (115 occurrences):** Model submits
+   `material_but_uncertain` verbatim for non-claimable rows, ignoring the
+   `claim_as="-"` indicator.  This accounts for the largest share of rejections
+   and is unchanged from v0 in volume.
+2. **`verdict_mismatch` (46 occurrences, new in v1):** Model uses `untested`
+   strength on entries whose verdict is `material_but_uncertain`
+   (`untested` maps to `material_untested`, not `material_but_uncertain`).
+   The `claim_as` column shows `"-"` for those rows but the model interprets
+   the verdict string as guidance instead.  Concentrated in I3, I4, C1.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,
