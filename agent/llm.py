@@ -5,6 +5,7 @@ FakeClient: replays a scripted list of responses for tests.
 """
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any
 
 
@@ -29,7 +30,12 @@ class OllamaClient:
     """Wraps the ollama package. Does NOT connect at import time."""
 
     def __init__(self, config: dict) -> None:
-        self._config = config
+        # Freeze one level deep: prevents any caller (or library) from
+        # silently mutating shared config state across runs.
+        self._config = MappingProxyType({
+            k: MappingProxyType(v) if isinstance(v, dict) else v
+            for k, v in config.items()
+        })
 
     def chat(self, messages: list[dict], tools: list[dict]) -> ChatResult:
         import ollama  # lazy import — server not contacted at import time
@@ -38,7 +44,7 @@ class OllamaClient:
             model=MODEL_TAG,
             messages=messages,
             tools=tools or None,
-            options=OPTIONS,
+            options=dict(OPTIONS),  # fresh dict each call; never passes shared ref
             think=THINK,
         )
         msg = resp.message

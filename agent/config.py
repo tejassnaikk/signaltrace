@@ -13,16 +13,21 @@ or reads them).
 """
 from __future__ import annotations
 
+from types import MappingProxyType
+
 MODEL_TAG = "qwen3:8b"
 MODEL_DIGEST = "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41"
 OLLAMA_VERSION = "0.35.1"
 
-OPTIONS = {
+# MappingProxyType: immutable at the source. Any code path that tries to
+# mutate OPTIONS raises TypeError immediately rather than silently
+# corrupting shared state across runs.
+OPTIONS = MappingProxyType({
     "temperature": 0,
     "seed": 20261001,
     "num_ctx": 16384,
     "num_predict": 2048,
-}
+})
 
 # Qwen3 is a hybrid reasoning model - whether to enable its thinking mode
 # is a real design choice, deliberately NOT made here. Decided later, on
@@ -32,13 +37,13 @@ THINK = False
 
 # Metadata only - describes the already-running server this project
 # depends on but does not manage.
-SERVER_ENV = {
+SERVER_ENV = MappingProxyType({
     "OLLAMA_FLASH_ATTENTION": "1",
     "OLLAMA_KV_CACHE_TYPE": "q8_0",
     "OLLAMA_LOAD_TIMEOUT": "15m",
     "OLLAMA_KEEP_ALIVE": "2h",
     "models_storage": "external USB SSD ~38 MB/s",
-}
+})
 
 
 def config() -> dict:

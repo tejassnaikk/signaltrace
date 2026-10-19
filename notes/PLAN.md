@@ -1346,6 +1346,50 @@ Changes (all motivated by v0 dev traces, no other changes made):
    narrative, or call another tool."`
    *Motivation:* same 21 `failed_no_tool_call` runs.
 
+**[Amendment 2026-10-18: v1 run invalidated by harness bug; re-run required]**
+
+The v1 dev run (`evaluation/results/agent_dev_f854dee9.jsonl`, 41 runs, 1 run
+per date) was invalidated by a harness bug and must be re-run in full.
+
+**Root cause.** `agent/config.py` exposed `OPTIONS` as a plain mutable `dict`.
+`OllamaClient.chat()` passed it by reference (`options=OPTIONS`) to
+`ollama.chat()`.  The pydantic `ChatRequest` model in the ollama library
+received this reference and, under a specific run path (I7 2017-02-08, 24
+submitted claims, 610 s), mutated it in place.  All 9 subsequent runs (4 I7,
+5 C1) failed on their first `ollama.chat()` call with HTTP 400 "model is
+required" in under 600 ms each.  Failures persist across runs because
+`OllamaClient` and `OPTIONS` are shared across the entire evaluation loop.
+
+**The fix.**  `OPTIONS` is now `MappingProxyType` (immutable at the source) in
+`agent/config.py`.  `OllamaClient.__init__` stores `self._config` as a
+deeply-frozen `MappingProxyType`.  `OllamaClient.chat()` passes
+`options=dict(OPTIONS)` — a fresh plain dict copy on every call, so no
+library can store or mutate the shared reference.
+
+**Invalid file retained.** `agent_dev_f854dee9.jsonl` renamed to
+`agent_dev_f854dee9_INVALID_harness_bug.jsonl` (kept for audit; not used in
+any scoring or reporting).
+
+**Re-run policy.** A harness bug that causes any run to fail with an
+infrastructure error (not an agent failure) invalidates the **entire** run
+file for that version.  Re-run the full version (all 41 dates) from scratch.
+Patching only the failed runs is not permitted — the corrupt shared state may
+have affected earlier runs' timing or context in ways that are not visible
+from the error alone.
+
+**Held-out rule (new).** If a harness bug corrupts the held-out run, the
+entire held-out run is invalidated and discarded.  After fixing the bug,
+the held-out run is executed exactly once.  Both the invalidated file and the
+replacement file are retained in `evaluation/results/` and both are reported
+in PLAN.md, clearly labelled invalid and replacement respectively.
+
+**Test.** `test_k_config_frozen_single_client_reused_across_runs` verifies:
+(1) `OPTIONS` is `MappingProxyType`; (2) `OllamaClient._config` is
+`MappingProxyType`; (3) mutations to either raise `TypeError`; (4) every
+`ollama.chat()` call across all unusual paths receives a fresh options copy
+(`kw["options"] is not OPTIONS`) with correct values.  The test fails on old
+code (plain mutable dict) and passes on the fixed code.
+
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION

@@ -998,3 +998,142 @@ def test_j_dash_rows_rejected_if_claimed() -> None:
     assert result["status"] == "ok"
     assert result["n_rejected"] >= 1, "Claim on '-' row should be rejected"
     con.close()
+
+
+# ------------------------------------------------------------------ #
+# (k) Immutable shared config across runs                            #
+# ------------------------------------------------------------------ #
+
+def test_k_config_frozen_single_client_reused_across_runs(monkeypatch) -> None:
+    """Single OllamaClient reused across many calls, covering all unusual loop paths.
+
+    Fails on old code (plain mutable dict OPTIONS):
+    - isinstance(OPTIONS, MappingProxyType) is False
+    - isinstance(client._config, MappingProxyType) is False
+    - OPTIONS["__mutate__"] = "x" succeeds instead of raising TypeError
+    - kw["options"] is OPTIONS (same shared object, not a fresh copy)
+
+    Passes on new code (OPTIONS is MappingProxyType, _config is frozen):
+    all four assertions hold.
+    """
+    import types
+    import ollama as _ollama_mod
+    from agent.config import OPTIONS, MODEL_TAG, config as _config_fn
+    from agent.llm import OllamaClient
+
+    # ---- Structural checks: fail on old (mutable dict) code ----
+    assert isinstance(OPTIONS, types.MappingProxyType), (
+        "agent.config.OPTIONS must be a MappingProxyType to prevent shared-state mutation"
+    )
+
+    client = OllamaClient(_config_fn())
+    assert isinstance(client._config, types.MappingProxyType), (
+        "OllamaClient._config must be a MappingProxyType"
+    )
+
+    # Any attempt to mutate must raise TypeError immediately
+    with pytest.raises(TypeError):
+        OPTIONS["__mutate__"] = "x"  # type: ignore[index]
+
+    with pytest.raises(TypeError):
+        client._config["__mutate__"] = "x"  # type: ignore[index]
+
+    # ---- Behavioral: every call gets model=MODEL_TAG + a fresh options copy ----
+    calls: list[dict] = []
+
+    class _FakeTC:
+        class function:
+            name = "get_factor_decomposition"
+            arguments = {}
+
+    class _FakeMsg:
+        content = None
+        tool_calls = [_FakeTC()]
+
+    class _FakeResp:
+        message = _FakeMsg()
+        prompt_eval_count = 50
+        eval_count = 5
+
+    def _capture(**kwargs):
+        calls.append(dict(kwargs))
+        return _FakeResp()
+
+    monkeypatch.setattr(_ollama_mod, "chat", _capture)
+
+    # Run 1 — unusual paths: text-turn + nudge, malformed repair, many-tool-call
+    # accumulation, exception recovery.
+
+    # Text turn + nudge path
+    client.chat([
+        {"role": "system", "content": "You are an agent."},
+        {"role": "user", "content": "Investigate 2017-02-08."},
+        {"role": "assistant", "content": "I'll think about this..."},
+        {"role": "user", "content": (
+            "Your last message was text, not a tool call. "
+            "Call the submit_answer tool now with arguments pattern, "
+            "claims and narrative, or call another tool."
+        )},
+    ], [])
+
+    # Malformed submit repair path
+    client.chat([
+        {"role": "system", "content": "You are an agent."},
+        {"role": "user", "content": "Investigate 2017-02-08."},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": "submit_answer", "arguments": {"pattern": "localized"}}}
+        ]},
+        {"role": "tool", "content": (
+            '{"error": "missing required field \'claims\'", '
+            '"hint": "Fix the error and call submit_answer again."}'
+        ), "tool_name": "submit_answer"},
+    ], [])
+
+    # Budget-approach: many accumulated tool-result messages
+    msgs = [
+        {"role": "system", "content": "You are an agent."},
+        {"role": "user", "content": "Investigate 2017-02-08."},
+    ]
+    for _ in range(7):
+        msgs += [
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"function": {"name": "test_dimension", "arguments": {"metric": "sessions", "dimension": "channel"}}}
+            ]},
+            {"role": "tool", "content": "[]", "tool_name": "test_dimension"},
+        ]
+    client.chat(msgs, [])
+
+    # Exception recovery: one call raises, subsequent runs must still get correct args
+    def _raise_then_capture(**kwargs):
+        if len(calls) == 3:
+            raise RuntimeError("simulated Ollama failure")
+        calls.append(dict(kwargs))
+        return _FakeResp()
+
+    monkeypatch.setattr(_ollama_mod, "chat", _raise_then_capture)
+    try:
+        client.chat([{"role": "user", "content": "Investigate 2017-02-08."}], [])
+    except RuntimeError:
+        pass  # exception is expected; the point is the next call still works
+
+    monkeypatch.setattr(_ollama_mod, "chat", _capture)
+
+    # Runs 2+: simple calls — config must be intact after all unusual-path calls
+    run1_call_count = len(calls)
+    for _ in range(5):
+        client.chat([
+            {"role": "system", "content": "You are an agent."},
+            {"role": "user", "content": "Investigate 2017-02-01."},
+        ], [])
+
+    assert len(calls) == run1_call_count + 5, "Expected 5 additional calls in runs 2+"
+
+    # Every captured call must have model=MODEL_TAG and a fresh options dict
+    expected_options = dict(OPTIONS)
+    for i, kw in enumerate(calls):
+        assert kw.get("model") == MODEL_TAG, \
+            f"call {i}: model={kw.get('model')!r}, expected {MODEL_TAG!r}"
+        assert kw.get("options") is not OPTIONS, \
+            f"call {i}: options must be a fresh copy, not the shared OPTIONS object"
+        assert kw.get("options") == expected_options, \
+            f"call {i}: options={kw.get('options')!r}, expected {expected_options}"
