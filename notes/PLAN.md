@@ -1415,6 +1415,61 @@ required fields including `turn_index`.
 `test_l_circuit_breaker_one_error_then_ok_does_not_stop` verify the circuit
 breaker behaviour.
 
+#### v1 → v2 (2026-10-18)
+
+Changes (both motivated by v1 dev traces, no other changes made):
+
+1. **`agent/render.py`: citable / context rendering split.**
+   `render_test_dimension` now returns `{"citable": [...], "context": [...]}` instead
+   of a flat list.  Citable rows (claimable verdicts: strong/plausible/material_untested/
+   arithmetic) get columns: short_id | segment | kind | direction | contribution |
+   evidence | basis | eligible | q.  The `evidence` column holds the claim_as
+   strength word.  No `verdict` column; `short_id` equals the entry_id value.
+   Context rows (non-claimable: material_but_uncertain/unsupported/etc.) get columns:
+   segment | kind | direction | contribution | verdict | basis | eligible | q — no
+   short_id.  `render_ledger_summary` similarly lists only citable entries with
+   short_id and evidence.  `loop._check_claims` now rejects any entry_id whose
+   harness verdict maps to "-" with "no ledger entry {id!r}", making context rows
+   invisible to the checker.
+   *Motivation:* 115/246 v1 rejections were `material_but_uncertain` submitted
+   verbatim — the model sees `claim_as="-"` but still submits the non-claimable
+   row.  Removing the row from the citable block (and its entry_id from the ledger
+   summary) eliminates the temptation.  Additional 46 `verdict_mismatch` in v1:
+   model uses `untested` strength on `material_but_uncertain` entries (wrong mapping);
+   again disappears when those entries have no short_id.
+
+2. **`agent/prompt.py`: pattern semantics.**
+   VERSION changed to "v2".  PATTERNS section replaced:
+   - Old: four flat definitions with no anchor.
+   - New: explicit anchor ("The pattern describes the cause behind your FIRST claim,
+     not everything you saw") plus semantics for `mix` ("a mix row carries more of
+     the metric's change than any single segment's row; your first claim cites that
+     mix row") and `broad` ("spread across many segments in every dimension, roughly
+     in proportion to their size, with no single row explaining most of it") and
+     `none` ("the movement looks like normal noise; claims may be empty").
+   TOOLS section updated to describe the two-block format: Citable rows with short_id
+   and evidence, Context rows with verdict and no short_id; submit instruction updated
+   to say "use short_id as entry_id, copy evidence as strength."
+   *Motivation:* agent submitted `localized` on 41/41 v1 dates (I4 correct=broad,
+   I6 correct=mix, C1 correct=none — all scored pattern=0 in both v0 and v1).
+   The model narrates the right story (I4: "broad cross-dimension movement"; I6:
+   "mix description"; C1: "opposing directions") but still writes `localized`
+   because the schema gives no guidance on when to choose the other options.
+
+**Deliberately unchanged in v2:**
+
+- **Ranking guidance** not added.  I2/I3 top-1 failures (v1: 2/5 each) arise
+  from the model ranking the wrong segment first (I2: sessions before
+  conversion_rate; I3: conversion_rate/Direct first, aov/Direct second), not from
+  a claim_as / context-row issue.  Addressing ranking is a separate problem that
+  may need targeted guidance; it is not the subject of v2.
+
+- **C1** not targeted.  C1 false-positive rate increased from 2/5 (v0) to 4/5 (v1)
+  despite fixes.  v2 may reduce this by hiding non-claimable rows (removing
+  material_but_uncertain bait), but no C1-specific guidance was added — any
+  improvement is a side-effect, not the motivation, and C1's scoring is measured
+  as-is after the v2 run.
+
 ---
 
 ## 4.4 Dev results: prompt v1

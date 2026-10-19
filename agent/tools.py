@@ -154,12 +154,14 @@ class ToolSession:
         _assert_serializable(rows)
         return rows
 
-    def test_dimension(self, metric: str, dimension: str) -> list[dict] | dict:
+    def test_dimension(self, metric: str, dimension: str) -> dict:
         """Every segment and mix row for (metric, dimension).
 
-        Returns a list of dicts, each with:
-            segment, kind, contribution, verdict, basis, eligible, q_value,
-            entry_id
+        Returns a dict with two blocks:
+            citable: list of claimable rows (short_id, segment, kind, direction,
+                     contribution, evidence, basis, eligible, q)
+            context: list of non-claimable rows (no short_id) plus optional
+                     immaterial-count note
 
         Records into the harness Ledger on first call; repeat calls return
         the same rows and entry_ids without re-recording.  Returns an error

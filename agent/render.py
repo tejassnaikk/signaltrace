@@ -5,10 +5,12 @@ harness ledger, generating entry IDs.  These functions handle rendering:
 deciding which fields the model sees and how they are formatted.
 
 Token-budget rules encoded here:
-- immaterial rows (verdict == "immaterial") are collapsed to a count.
-  They are never claimable, so excluding them does not lose information.
-- get_ledger_summary is compact: only entry_id, identifiers, verdict,
-  direction, and contribution.  actual/expected/p_value/etc. are not needed.
+- immaterial rows (verdict == "immaterial") are collapsed to a count note
+  in the Context block.  They are never claimable.
+- test_dimension returns two blocks:
+    citable: rows the model can claim (short_id + evidence, no verdict)
+    context: non-claimable rows + immaterial note (no short_id)
+- get_ledger_summary lists only citable entries: short_id + evidence.
 """
 from __future__ import annotations
 
@@ -30,30 +32,70 @@ def verdict_to_claim_as(verdict: str) -> str:
     return _VERDICT_TO_CLAIM_AS.get(verdict, "-")
 
 
-def render_test_dimension(rows: list[dict]) -> list:
-    """Drop immaterial rows (replace with a count note), keep all others.
+def render_test_dimension(rows: list[dict]) -> dict:
+    """Split rows into citable and context blocks.
 
-    Adds a claim_as field to each kept row: the strength word the agent should
-    copy when claiming this row, or '-' for rows that cannot be claimed.
+    Citable rows: claimable (verdict maps to a strength word).
+    Columns: short_id | segment | kind | direction | contribution | evidence |
+             basis | eligible | q
+    The evidence column holds the claim_as value (strong/plausible/untested/exact).
+    No verdict column; short_id equals the entry_id value.
+
+    Context rows: non-claimable material rows plus the immaterial count note.
+    Columns: segment | kind | direction | contribution | verdict | basis |
+             eligible | q
+    No short_id — these rows are invisible to the claim checker.
     """
     material = [r for r in rows if r.get("verdict") != _IMMATERIAL]
     n_skip = len(rows) - len(material)
-    result = [{**r, "claim_as": verdict_to_claim_as(r.get("verdict", ""))} for r in material]
+
+    citable: list[dict] = []
+    context: list[dict] = []
+
+    for r in material:
+        ca = verdict_to_claim_as(r.get("verdict", ""))
+        if ca != "-":
+            citable.append({
+                "short_id": r.get("entry_id"),
+                "segment": r.get("segment"),
+                "kind": r.get("kind"),
+                "direction": r.get("direction"),
+                "contribution": r.get("contribution"),
+                "evidence": ca,
+                "basis": r.get("basis"),
+                "eligible": r.get("eligible"),
+                "q": r.get("q_value"),
+            })
+        else:
+            context.append({
+                "segment": r.get("segment"),
+                "kind": r.get("kind"),
+                "direction": r.get("direction"),
+                "contribution": r.get("contribution"),
+                "verdict": r.get("verdict"),
+                "basis": r.get("basis"),
+                "eligible": r.get("eligible"),
+                "q": r.get("q_value"),
+            })
+
     if n_skip:
-        result.append({"note": f"{n_skip} immaterial row(s) omitted (contribution < 5%)"})
-    return result
+        context.append({"note": f"{n_skip} immaterial row(s) omitted (contribution < 5%)"})
+
+    return {"citable": citable, "context": context}
 
 
 def render_ledger_summary(entries: list) -> list[dict]:
-    """Minimal ledger: entry_id + verdict only.
+    """Compact ledger: citable entries only, showing short_id and evidence.
 
-    The agent already saw segment/metric/dimension/contribution in the
-    test_dimension results; the ledger is only a citation cross-reference.
     Immaterial entries excluded (never claimable).
+    Non-claimable material entries excluded (context-only, no short_id shown).
     """
     out = []
     for e in entries:
         if e.verdict == _IMMATERIAL:
             continue
-        out.append({"entry_id": e.evidence_id, "verdict": e.verdict})
+        ca = verdict_to_claim_as(e.verdict)
+        if ca == "-":
+            continue
+        out.append({"short_id": e.evidence_id, "evidence": ca})
     return out

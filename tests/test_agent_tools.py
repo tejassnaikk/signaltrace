@@ -67,6 +67,8 @@ def _answers_equivalent(a1: Answer, a2: Answer) -> bool:
 @pytest.mark.parametrize("iid,date", DEV_CASES)
 def test_a_equivalence(iid: str, date: str) -> None:
     """For all 9 (metric, dimension) pairs, test_dimension matches the engine."""
+    from agent.render import verdict_to_claim_as
+
     con = build_incident_con(iid, date)
     session = ToolSession(date, con)
 
@@ -79,37 +81,67 @@ def test_a_equivalence(iid: str, date: str) -> None:
     for metric in REVENUE_FACTORS:
         for dimension in DIMENSIONS:
             rows = session.test_dimension(metric, dimension)
-            assert isinstance(rows, list), \
-                f"{iid} {date} ({metric},{dimension}): expected list"
+            assert isinstance(rows, dict), \
+                f"{iid} {date} ({metric},{dimension}): expected dict"
+            assert "citable" in rows and "context" in rows, \
+                f"{iid} {date} ({metric},{dimension}): missing citable/context blocks"
 
-            # render_test_dimension collapses immaterial rows to a note entry
-            material_rows = [r for r in rows if "entry_id" in r]
-            note_rows = [r for r in rows if "note" in r]
+            citable_rows = rows["citable"]
+            ctx_data = [r for r in rows["context"] if "note" not in r]
+            note_rows = [r for r in rows["context"] if "note" in r]
+
             expected = by_key.get((metric, dimension), [])
             expected_material = [e for e in expected if e.verdict != "immaterial"]
             n_immaterial = len(expected) - len(expected_material)
 
-            assert len(material_rows) == len(expected_material), (
+            assert len(citable_rows) + len(ctx_data) == len(expected_material), (
                 f"{iid} {date} ({metric},{dimension}): "
-                f"got {len(material_rows)} material rows, expected {len(expected_material)}"
+                f"{len(citable_rows)} citable + {len(ctx_data)} context "
+                f"!= {len(expected_material)} expected_material"
             )
             # at most one note entry, present iff any rows were omitted
             assert len(note_rows) == (1 if n_immaterial else 0), \
                 f"{iid} {date} ({metric},{dimension}): expected {'1 note' if n_immaterial else 'no note'}"
 
-            for i, (row, e) in enumerate(zip(material_rows, expected_material)):
-                ctx = f"{iid} {date} ({metric},{dimension}) row {i}"
-                assert row["segment"] == e.segment, f"{ctx}: segment"
-                assert row["kind"] == e.kind, f"{ctx}: kind"
-                assert row["verdict"] == e.verdict, f"{ctx}: verdict"
-                assert row["basis"] == e.basis, f"{ctx}: basis"
-                assert row["eligible"] == (e.basis != "ineligible_segment"), \
-                    f"{ctx}: eligible"
-                assert _floats_equal(row["q_value"], e.q_value), \
-                    f"{ctx}: q_value {row['q_value']!r} != {e.q_value!r}"
-                assert _floats_equal(row["contribution"], e.contribution), \
-                    f"{ctx}: contribution"
-                assert "entry_id" in row, f"{ctx}: missing entry_id"
+            # Build lookup by (segment, kind) from engine entries
+            expected_by_sk = {(e.segment, e.kind): e for e in expected_material}
+
+            # Citable rows: must have short_id, evidence; must NOT have verdict, entry_id, q_value
+            for row in citable_rows:
+                ctx = f"{iid} {date} ({metric},{dimension}) citable {row.get('segment')}/{row.get('kind')}"
+                assert "short_id" in row, f"{ctx}: missing short_id"
+                assert "entry_id" not in row, f"{ctx}: should not have entry_id"
+                assert "evidence" in row, f"{ctx}: missing evidence"
+                assert "verdict" not in row, f"{ctx}: should not have verdict"
+                assert "q" in row, f"{ctx}: missing q"
+                assert "q_value" not in row, f"{ctx}: should not have q_value"
+                e = expected_by_sk.get((row["segment"], row["kind"]))
+                if e is not None:
+                    assert row["basis"] == e.basis, f"{ctx}: basis"
+                    assert row["eligible"] == (e.basis != "ineligible_segment"), f"{ctx}: eligible"
+                    assert _floats_equal(row["q"], e.q_value), \
+                        f"{ctx}: q {row['q']!r} != {e.q_value!r}"
+                    assert _floats_equal(row["contribution"], e.contribution), f"{ctx}: contribution"
+                    assert row["evidence"] == verdict_to_claim_as(e.verdict), \
+                        f"{ctx}: evidence {row['evidence']!r} != verdict_to_claim_as({e.verdict!r})"
+
+            # Context rows: must have verdict; must NOT have short_id, entry_id, q_value
+            for row in ctx_data:
+                ctx = f"{iid} {date} ({metric},{dimension}) context {row.get('segment')}/{row.get('kind')}"
+                assert "verdict" in row, f"{ctx}: missing verdict"
+                assert "short_id" not in row, f"{ctx}: should not have short_id"
+                assert "entry_id" not in row, f"{ctx}: should not have entry_id"
+                assert "q" in row, f"{ctx}: missing q"
+                assert "q_value" not in row, f"{ctx}: should not have q_value"
+                assert verdict_to_claim_as(row["verdict"]) == "-", \
+                    f"{ctx}: context row has claimable verdict {row['verdict']!r}"
+                e = expected_by_sk.get((row["segment"], row["kind"]))
+                if e is not None:
+                    assert row["verdict"] == e.verdict, f"{ctx}: verdict"
+                    assert row["basis"] == e.basis, f"{ctx}: basis"
+                    assert _floats_equal(row["q"], e.q_value), \
+                        f"{ctx}: q {row['q']!r} != {e.q_value!r}"
+                    assert _floats_equal(row["contribution"], e.contribution), f"{ctx}: contribution"
 
     con.close()
 
@@ -290,7 +322,7 @@ def test_f_no_duplicate_entries(iid: str, date: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_h_immaterial_rows_collapsed() -> None:
-    """render_test_dimension collapses immaterial rows to a single note entry."""
+    """render_test_dimension collapses immaterial rows to a note in the context block."""
     from agent.render import render_test_dimension
     rows = [
         {"segment": "A", "verdict": "strong", "entry_id": "E1"},
@@ -298,10 +330,12 @@ def test_h_immaterial_rows_collapsed() -> None:
         {"segment": "C", "verdict": "immaterial", "entry_id": "E3"},
     ]
     rendered = render_test_dimension(rows)
-    material = [r for r in rendered if "entry_id" in r]
-    notes = [r for r in rendered if "note" in r]
-    assert len(material) == 1
-    assert material[0]["segment"] == "A"
+    assert isinstance(rendered, dict), "render_test_dimension must return a dict"
+    citable = rendered["citable"]
+    context = rendered["context"]
+    assert len(citable) == 1
+    assert citable[0]["segment"] == "A"
+    notes = [r for r in context if "note" in r]
     assert len(notes) == 1
     assert "2" in notes[0]["note"]  # "2 immaterial row(s) omitted"
 
@@ -314,12 +348,14 @@ def test_h_no_note_when_no_immaterial() -> None:
         {"segment": "B", "verdict": "plausible", "entry_id": "E2"},
     ]
     rendered = render_test_dimension(rows)
-    assert len(rendered) == 2
-    assert all("entry_id" in r for r in rendered)
+    assert isinstance(rendered, dict)
+    assert len(rendered["citable"]) == 2
+    assert len(rendered["context"]) == 0
+    assert all("short_id" in r for r in rendered["citable"])
 
 
 def test_h_ledger_summary_compact() -> None:
-    """render_ledger_summary returns only entry_id + verdict, no immaterial."""
+    """render_ledger_summary returns only short_id + evidence for citable entries."""
     from agent.render import render_ledger_summary
 
     class FakeEntry:
@@ -336,10 +372,10 @@ def test_h_ledger_summary_compact() -> None:
     ]
     rendered = render_ledger_summary(entries)
     assert len(rendered) == 2
-    ids = [r["entry_id"] for r in rendered]
+    ids = [r["short_id"] for r in rendered]
     assert "E1" in ids and "E3" in ids and "E2" not in ids
     for r in rendered:
-        assert set(r.keys()) == {"entry_id", "verdict"}
+        assert set(r.keys()) == {"short_id", "evidence"}
 
 
 def test_h_context_guard_fires(tmp_path) -> None:

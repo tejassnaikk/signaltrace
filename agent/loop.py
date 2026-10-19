@@ -18,7 +18,7 @@ from typing import Any
 
 from agent.llm import OllamaRequestError
 from agent.prompt import SYSTEM_PROMPT
-from agent.render import _VERDICT_TO_CLAIM_AS
+from agent.render import _VERDICT_TO_CLAIM_AS, verdict_to_claim_as
 from agent.tools import _row_direction
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
 
@@ -54,9 +54,10 @@ _TOOLS = [
             "name": "test_dimension",
             "description": (
                 "Test every segment of one dimension for one metric. Returns "
-                "segment, kind, direction, verdict, contribution, q_value, and "
-                "entry_id for each non-immaterial row. Immaterial rows "
-                "(contribution < 5%) are collapsed to a count note."
+                "two blocks: Citable rows (short_id, segment, kind, direction, "
+                "contribution, evidence, basis, eligible, q) and Context rows "
+                "(segment, kind, direction, contribution, verdict, basis, "
+                "eligible, q). Immaterial rows collapsed to a note in Context."
             ),
             "parameters": {
                 "type": "object",
@@ -79,9 +80,9 @@ _TOOLS = [
         "function": {
             "name": "get_ledger_summary",
             "description": (
-                "Compact list of non-immaterial evidence entries recorded so far: "
-                "entry_id and verdict only. Use to review coverage and find "
-                "entry_ids for claims."
+                "Compact list of citable evidence entries recorded so far: "
+                "short_id and evidence only. Use to review coverage and find "
+                "short_ids for claims."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
@@ -114,7 +115,7 @@ _TOOLS = [
                             "properties": {
                                 "entry_id": {
                                     "type": "string",
-                                    "description": "Ledger entry_id from test_dimension output.",
+                                    "description": "short_id from a Citable row in test_dimension output.",
                                 },
                                 "direction": {
                                     "type": "string",
@@ -125,9 +126,8 @@ _TOOLS = [
                                     "type": "string",
                                     "enum": list(_STRENGTHS),
                                     "description": (
-                                        "strong/plausible for significance-tested rows; "
-                                        "untested for aov segments or ineligible rows; "
-                                        "exact for arithmetic mix rows."
+                                        "Copy the evidence word from the Citable row "
+                                        "(strong / plausible / untested / exact)."
                                     ),
                                 },
                             },
@@ -203,6 +203,11 @@ def _check_claims(
 
         entry = by_id.get(entry_id)
         if entry is None:
+            rejected.append({**c, "reason": f"no ledger entry {entry_id!r}"})
+            continue
+
+        # Context rows have no short_id shown to the model; treat as invisible.
+        if verdict_to_claim_as(entry.verdict) == "-":
             rejected.append({**c, "reason": f"no ledger entry {entry_id!r}"})
             continue
 

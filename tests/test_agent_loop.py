@@ -486,9 +486,9 @@ def test_exact_strength_accepted_for_mix_row() -> None:
     session = ToolSession(date, con)
 
     rows = session.test_dimension("conversion_rate", "device")
-    mix_row = next((r for r in rows if r["kind"] == "mix"), None)
-    assert mix_row is not None, "No mix row for conversion_rate x device on I6/2016-11-04"
-    assert mix_row["verdict"] == "arithmetic", f"Expected arithmetic, got {mix_row['verdict']}"
+    mix_row = next((r for r in rows["citable"] if r["kind"] == "mix"), None)
+    assert mix_row is not None, "No mix row in citable block for conversion_rate x device on I6/2016-11-04"
+    assert mix_row["evidence"] == "exact", f"Expected evidence='exact', got {mix_row.get('evidence')!r}"
 
     responses = [
         {"tool_calls": [{"name": "test_dimension", "args": {"metric": "conversion_rate", "dimension": "device"}}]},
@@ -498,7 +498,7 @@ def test_exact_strength_accepted_for_mix_row() -> None:
                 "args": {
                     "pattern": "mix",
                     "claims": [{
-                        "entry_id": mix_row["entry_id"],
+                        "entry_id": mix_row["short_id"],
                         "direction": mix_row["direction"],
                         "strength": "exact",
                     }],
@@ -522,7 +522,7 @@ def test_i6_mix_pattern_passes_score_b() -> None:
     session = ToolSession(date, con)
 
     rows = session.test_dimension("conversion_rate", "device")
-    mix_row = next((r for r in rows if r["kind"] == "mix"), None)
+    mix_row = next((r for r in rows["citable"] if r["kind"] == "mix"), None)
     assert mix_row is not None
 
     responses = [
@@ -533,7 +533,7 @@ def test_i6_mix_pattern_passes_score_b() -> None:
                 "args": {
                     "pattern": "mix",
                     "claims": [{
-                        "entry_id": mix_row["entry_id"],
+                        "entry_id": mix_row["short_id"],
                         "direction": mix_row["direction"],
                         "strength": "exact",
                     }],
@@ -906,11 +906,11 @@ def test_j_claim_as_matches_checker_mapping() -> None:
 
 @pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
 def test_j_copying_claim_as_never_rejected_for_strength(iid: str, date: str) -> None:
-    """Copying a row's claim_as field as the strength is never rejected for invalid_strength.
+    """Copying a citable row's evidence field as the strength is never rejected for invalid_strength.
 
-    Parametrized over all 41 dev dates.  For every non-immaterial row returned
-    by test_dimension, submitting claim_as as the strength must produce no
-    invalid_strength rejection.  Rows with claim_as '-' are skipped (not submitted).
+    Parametrized over all 41 dev dates.  For every citable row returned by
+    test_dimension, submitting evidence as the strength must produce no
+    invalid_strength rejection.
     """
     con = build_incident_con(iid, date)
     session = ToolSession(date, con)
@@ -920,17 +920,15 @@ def test_j_copying_claim_as_never_rejected_for_strength(iid: str, date: str) -> 
 
     for m, d in all_pairs:
         rows = session.test_dimension(m, d)
-        for row in rows:
-            if "claim_as" not in row or row["claim_as"] == "-":
-                continue
+        for row in rows["citable"]:
             claims_args.append({
-                "entry_id": row["entry_id"],
+                "entry_id": row["short_id"],
                 "direction": row["direction"],
-                "strength": row["claim_as"],
+                "strength": row["evidence"],
             })
 
     if not claims_args:
-        pytest.skip(f"no claimable rows on {iid}/{date}")
+        pytest.skip(f"no citable rows on {iid}/{date}")
 
     responses = [
         {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
@@ -939,7 +937,7 @@ def test_j_copying_claim_as_never_rejected_for_strength(iid: str, date: str) -> 
     responses.append({
         "tool_calls": [{
             "name": "submit_answer",
-            "args": {"pattern": "localized", "claims": claims_args, "narrative": "claim_as test"},
+            "args": {"pattern": "localized", "claims": claims_args, "narrative": "evidence test"},
         }]
     })
 
@@ -950,30 +948,35 @@ def test_j_copying_claim_as_never_rejected_for_strength(iid: str, date: str) -> 
         if "invalid_strength" in r.get("reason", "")
     ]
     assert strength_rejections == [], \
-        f"{iid}/{date}: claim_as copied as strength was rejected: {strength_rejections}"
+        f"{iid}/{date}: evidence copied as strength was rejected: {strength_rejections}"
     con.close()
 
 
 def test_j_dash_rows_rejected_if_claimed() -> None:
-    """A row with claim_as '-' is rejected when claimed (invalid_strength)."""
+    """A non-citable (context) row's entry_id is rejected when claimed ('no ledger entry')."""
     iid, date = _SCORE_DATES[0]  # I1/2017-01-26: sessions has unsupported rows
     con = build_incident_con(iid, date)
     session = ToolSession(date, con)
 
-    # Find a non-claimable, non-immaterial row (e.g. unsupported or material_but_uncertain)
+    # Populate all pairs so the harness ledger has all entries
     all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
-    dash_row = None
     for m, d in all_pairs:
-        rows = session.test_dimension(m, d)
-        for row in rows:
-            if row.get("claim_as") == "-" and "entry_id" in row:
-                dash_row = row
-                break
-        if dash_row:
+        session.test_dimension(m, d)
+
+    # Find a non-citable, non-immaterial entry from the harness ledger
+    from agent.render import verdict_to_claim_as
+    from agent.tools import _row_direction
+    harness = session._harness_ledger()
+    dash_entry = None
+    for e in harness.entries:
+        if verdict_to_claim_as(e.verdict) == "-" and e.verdict != "immaterial":
+            dash_entry = e
             break
 
-    if dash_row is None:
-        pytest.skip("no non-claimable non-immaterial row found on this date")
+    if dash_entry is None:
+        pytest.skip("no non-citable non-immaterial entry found on this date")
+
+    dash_direction = _row_direction(dash_entry.actual, dash_entry.expected)
 
     responses = [
         {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
@@ -985,18 +988,18 @@ def test_j_dash_rows_rejected_if_claimed() -> None:
             "args": {
                 "pattern": "localized",
                 "claims": [{
-                    "entry_id": dash_row["entry_id"],
-                    "direction": dash_row["direction"],
-                    "strength": "strong",  # any strength word — entry verdict won't match
+                    "entry_id": dash_entry.evidence_id,
+                    "direction": dash_direction,
+                    "strength": "strong",  # any strength word — entry is context-only
                 }],
-                "narrative": "dash row claim test",
+                "narrative": "context row claim test",
             },
         }]
     })
 
     result = run_agent(session, FakeClient(responses), budget=14)
     assert result["status"] == "ok"
-    assert result["n_rejected"] >= 1, "Claim on '-' row should be rejected"
+    assert result["n_rejected"] >= 1, "Claim on context row should be rejected"
     con.close()
 
 
@@ -1220,3 +1223,166 @@ def test_l_response_error_produces_error_context_with_turn_index(monkeypatch) ->
     # Error string must contain the embedded context block
     assert "--- Ollama request context ---" in result["error"]
     assert "turn_index" in result["error"]
+
+
+# ------------------------------------------------------------------ #
+# (m) v2: citable/context split                                       #
+# ------------------------------------------------------------------ #
+
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_m_no_context_row_has_short_id(iid: str, date: str) -> None:
+    """No context row carries a short_id key, across all 41 dev dates."""
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    for m in REVENUE_FACTORS:
+        for d in DIMENSIONS:
+            rendered = session.test_dimension(m, d)
+            if isinstance(rendered, dict) and "error" in rendered:
+                continue
+            for row in rendered["context"]:
+                assert "short_id" not in row, (
+                    f"{iid}/{date} ({m},{d}): context row has short_id: {row}"
+                )
+    con.close()
+
+
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_m_citable_evidence_equals_checker_mapping(iid: str, date: str) -> None:
+    """Every citable row's evidence equals verdict_to_claim_as applied to its harness verdict."""
+    from agent.render import verdict_to_claim_as
+
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    for m in REVENUE_FACTORS:
+        for d in DIMENSIONS:
+            rendered = session.test_dimension(m, d)
+            if isinstance(rendered, dict) and "error" in rendered:
+                continue
+
+            # Build lookup by entry_id (= short_id) from harness ledger
+            ledger = session._harness_ledger()
+            by_id = {e.evidence_id: e for e in ledger.entries}
+
+            for row in rendered["citable"]:
+                entry = by_id.get(row["short_id"])
+                assert entry is not None, (
+                    f"{iid}/{date} ({m},{d}): citable row short_id={row['short_id']!r} "
+                    f"not in ledger"
+                )
+                expected_evidence = verdict_to_claim_as(entry.verdict)
+                assert expected_evidence != "-", (
+                    f"{iid}/{date} ({m},{d}): citable row verdict={entry.verdict!r} "
+                    f"maps to '-' in checker"
+                )
+                assert row["evidence"] == expected_evidence, (
+                    f"{iid}/{date} ({m},{d}): row evidence={row['evidence']!r} "
+                    f"but verdict_to_claim_as({entry.verdict!r})={expected_evidence!r}"
+                )
+    con.close()
+
+
+def test_m_context_row_id_rejected() -> None:
+    """Citing a context row's actual entry_id is rejected with 'no ledger entry'."""
+    from agent.render import verdict_to_claim_as
+    from agent.tools import _row_direction
+
+    iid, date = _SCORE_DATES[0]  # I1/2017-01-26
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    for m, d in all_pairs:
+        session.test_dimension(m, d)
+
+    # Find a non-citable, non-immaterial entry from the harness ledger
+    harness = session._harness_ledger()
+    context_entry = None
+    for e in harness.entries:
+        if verdict_to_claim_as(e.verdict) == "-" and e.verdict != "immaterial":
+            context_entry = e
+            break
+
+    if context_entry is None:
+        pytest.skip("no context-row entry found on this date")
+
+    direction = _row_direction(context_entry.actual, context_entry.expected)
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {
+                "pattern": "localized",
+                "claims": [{
+                    "entry_id": context_entry.evidence_id,
+                    "direction": direction,
+                    "strength": "strong",
+                }],
+                "narrative": "context row claim test",
+            },
+        }]
+    })
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok"
+    assert result["n_rejected"] >= 1, "Claim on context row should be rejected"
+    rejected_entry = result["rejected"][0]
+    assert "no ledger entry" in rejected_entry["reason"], (
+        f"Expected 'no ledger entry' reason, got {rejected_entry['reason']!r}"
+    )
+    con.close()
+
+
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_m_evidence_as_strength_never_rejected(iid: str, date: str) -> None:
+    """Copying a citable row's evidence word as strength is never rejected for invalid_strength.
+
+    Parametrized over all 41 dev dates.  A FakeClient that mirrors the evidence
+    field of every citable row should produce zero invalid_strength rejections.
+    """
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    claims_args = []
+
+    for m, d in all_pairs:
+        rendered = session.test_dimension(m, d)
+        if isinstance(rendered, dict) and "error" in rendered:
+            continue
+        for row in rendered["citable"]:
+            claims_args.append({
+                "entry_id": row["short_id"],
+                "direction": row["direction"],
+                "strength": row["evidence"],
+            })
+
+    if not claims_args:
+        pytest.skip(f"no citable rows on {iid}/{date}")
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {"pattern": "localized", "claims": claims_args, "narrative": "evidence test"},
+        }]
+    })
+
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok", f"{iid}/{date}: {result['status']}"
+    strength_rejections = [
+        r for r in result["rejected"]
+        if "invalid_strength" in r.get("reason", "")
+    ]
+    assert strength_rejections == [], (
+        f"{iid}/{date}: evidence copied as strength was rejected: {strength_rejections}"
+    )
+    con.close()
