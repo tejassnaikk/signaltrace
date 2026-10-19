@@ -1719,6 +1719,261 @@ Two failure modes persist:
 
 ---
 
+## 4.5 Dev results: prompt v2
+
+**41 runs (41 dev dates × 1 run), config hash `8de7f376`, prompt version `v2`.**
+Full report: `evaluation/results/agent_dev_8de7f376_report.md`.
+
+### a. Status counts
+
+All 41 runs: `ok`.  Zero failures in all three of v0 (per-date), v1, v2.
+
+| incident | v0 ok | v1 ok | v2 ok |
+|---|---|---|---|
+| I1 | 2 | 5 | 5 |
+| I2 | 4 | 5 | 5 |
+| I3 | 4 | 5 | 5 |
+| I3b | 1 | 1 | 1 |
+| I4 | 5 | 5 | 5 |
+| I5 | 5 | 5 | 5 |
+| I6 | 4 | 5 | 5 |
+| I7 | 5 | 5 | 5 |
+| C1 | 4 | 5 | 5 |
+
+(v0 ok counts are per-date ok from the first of 3 identical runs; total run ok counts are 102, 41, 41.)
+
+### b. Score A per incident (dates out of 5; I3b out of 1)
+
+All runs count toward denominator.
+
+| incident | target | v0 | v1 | v2 | engine dev |
+|---|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 2/5 | 5/5 | 2/5 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 4/5 | 4/5 | 3/5 | 5/5 |
+| I3 | aov/channel/Direct | 0/5 | 4/5 | 0/5 | 5/5 |
+| I3b | aov/channel/Direct | 0/1 | 0/1 | 0/1 | 0/1 |
+| I5 | conversion_rate/device/desktop | 4/5 | 4/5 | 3/5 | 4/5 |
+| I7 | sessions/channel/Organic Search | 5/5 | 5/5 | 3/5 | 5/5 |
+| I7 | conversion_rate/channel/Referral | 5/5 | 5/5 | 2/5 | 5/5 |
+
+I3 +4 dates in v1, back to 0 in v2 (mix overcorrection, see §4.5.4).
+I1 +3 dates in v1, back to 2/5 in v2.  I7 loses 3 dates relative to v1.
+
+### c. Score B per incident (pattern / top-1 / top-3)
+
+I7 both-targets-in-top-3: v0 5/5 · v1 5/5 · v2 0/5 · engine 3/5.
+
+| inc | v0 pat | v0 t1 | v0 t3 | v1 pat | v1 t1 | v1 t3 | v2 pat | v2 t1 | v2 t3 | eng pat | eng t1 | eng t3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| I1 | 2/5 | 2/5 | 2/5 | 5/5 | 5/5 | 5/5 | 1/5 | 1/5 | 1/5 | 5/5 | 3/5 | 4/5 |
+| I2 | 4/5 | 3/5 | 4/5 | 5/5 | 2/5 | 4/5 | 0/5 | 0/5 | 0/5 | 5/5 | 5/5 | 5/5 |
+| I3 | 4/5 | 0/5 | 0/5 | 5/5 | 2/5 | 3/5 | 0/5 | 0/5 | 0/5 | 5/5 | 3/5 | 5/5 |
+| I3b | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 |
+| I4 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I5 | 5/5 | 2/5 | 3/5 | 5/5 | 2/5 | 3/5 | 0/5 | 0/5 | 0/5 | 5/5 | 0/5 | 0/5 |
+| I6 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 5/5 | 4/5 | 5/5 |
+| C1 | 0/5 | — | — | 0/5 | — | — | 0/5 | — | — | 0/5 | — | — |
+
+I6 gains 5/5 pattern (correct=mix — the intended fix).  Every other non-mix incident
+loses pattern: the model submits `mix` on 40/41 dates.  I7 Score B top-1 collapses from
+5/5 to 0/5.
+
+### d. C1: false positives and untested claims
+
+| arm | n runs | false positives | untested claims |
+|---|---|---|---|
+| v0 agent | 5 | 2 | 0 |
+| v1 agent | 5 | 4 | 3 |
+| v2 agent | 5 | 1 | 14 |
+| engine dev | 5 | 1 | 13 |
+
+v2 FP drops to 1 (matches engine); untested claims jump from 3 to 14 (matches engine's 13 —
+context rows with `material_untested` verdicts are now hidden from citable block, so the model
+cites arithmetic/mix rows instead, which count as untested by the C1 checker).
+
+### e. Rejected claims
+
+v2: **0 rejected claims** across all 41 runs.  The citable/context rendering split
+(v2 change 1) fully eliminates invalid-strength rejections — the model now only sees
+claimable rows with valid strength words and only submits from that set.
+
+| version | total rejected | invalid_strength | verdict_mismatch |
+|---|---|---|---|
+| v0 | 729 | 729 | 0 |
+| v1 | 246 | 200 | 46 |
+| v2 | 0 | 0 | 0 |
+
+Submitted strengths in v2 (from trace): exact=136, strong=33, untested=31, plausible=4 —
+all valid, none rejected.  `exact` dominates because mix rows (verdict=arithmetic, claim_as=exact)
+now appear prominently in the citable block.
+
+### f. Pattern distribution (per incident)
+
+| pattern | v0 (41 dates) | v1 (41 dates) | v2 (41 dates) |
+|---|---|---|---|
+| localized | 27 | 41 | 1 |
+| broad | 0 | 0 | 0 |
+| mix | 0 | 0 | 40 |
+| none | 7 | 0 | 0 |
+| no_answer (failed) | 7 | 0 | 0 |
+
+I4 (correct=broad) and C1 (correct=none) remain unresolved in v2 (both submit `mix`).
+I6 (correct=mix): v0=0, v1=0, v2=5 — fixed by v2.
+
+---
+
+### 4.5.1 Selection metric (PLAN 4.2 rule)
+
+Rank: highest total dev Score B top-1 count (per-date, 41 dates each).
+Tie-break 1: fewer checker-rejected claims.  Tie-break 2: fewer failed runs.
+
+| version | total top-1 | rejected claims | failed runs |
+|---|---|---|---|
+| v0 | 12 | 729 | 21 |
+| v1 | **16** | 246 | 0 |
+| v2 | 1 | 0 | 0 |
+| engine | 15 | — | — |
+
+**Winner: v1** (top-1=16, no tie needed).
+
+Per-incident top-1 breakdown:
+
+| incident | v0 | v1 | v2 | engine |
+|---|---|---|---|---|
+| I1 | 2/5 | 5/5 | 1/5 | 3/5 |
+| I2 | 3/5 | 2/5 | 0/5 | 5/5 |
+| I3 | 0/5 | 2/5 | 0/5 | 3/5 |
+| I3b | 0/1 | 0/1 | 0/1 | 0/1 |
+| I5 | 2/5 | 2/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 0/5 | 4/5 |
+| **total** | **12** | **16** | **1** | **15** |
+
+---
+
+### 4.5.2 Hypothesis test: mix overcorrection
+
+**Hypothesis:** "v2 overcorrected toward mix: mix rows are always citable with evidence
+`exact`, and the agent now picks pattern=mix and/or ranks mix rows first on incidents where
+a segment is the cause."
+
+**Result: confirmed.**
+
+**pattern=mix per incident (v2):**
+
+| incident | correct pattern | pattern=mix count |
+|---|---|---|
+| I1 | localized | 4/5 |
+| I2 | localized | 5/5 |
+| I3 | localized | 5/5 |
+| I3b | localized | 1/1 |
+| I4 | broad | 5/5 |
+| I5 | localized | 5/5 |
+| I6 | mix | 5/5 ✓ |
+| I7 | localized | 5/5 |
+| C1 | none | 5/5 |
+
+40/41 dates submit pattern=mix.  Only I1/2017-05-04 submits localized (unchanged from v1).
+
+**First claim is a mix row (kind=mix):**
+
+| incident | first_claim_is_mix |
+|---|---|
+| I1 | 3/5 |
+| I2 | 2/5 |
+| I3 | 5/5 |
+| I3b | 1/1 |
+| I4 | 4/5 |
+| I5 | 2/5 |
+| I6 | 3/5 |
+| I7 | 2/5 |
+| C1 | 5/5 |
+
+27/41 dates rank a mix row first (62%).
+
+**Score A failures in v2 that passed in v1 (14 cases):**
+
+All 14 have the same diagnosis: the target segment is **absent from the claim list
+entirely** (not merely outranked).  In 12/14 the first claim is a mix row.  In 2/14
+(I7/2017-02-01 and I7/2017-05-23) the first claim is a within row, but mix rows are
+present elsewhere and pattern=mix was still selected.  There are zero cases where the
+target segment is present in claims but outranked by a mix row.
+
+**Root cause:** the citable/context split removes `material_but_uncertain` and `unsupported`
+rows from the visible block.  That part works — rejected claims drop to 0.  But mix rows
+(verdict=arithmetic, claim_as=exact) are always citable and always appear in the citable
+block for every ratio metric × dimension combination tested.  The v2 pattern anchor says
+"if your first claim cites a mix row, use mix."  The model generalises: always cite a mix
+row first → always use pattern=mix → the target within-segment row is dropped from claims
+(or demoted behind the mix row, which counts as not-top-1).  I6 is the one incident where
+this is correct; on every other incident it is wrong.
+
+---
+
+### 4.5.3 Interaction term (skipped question from 8999240 amendment)
+
+1. **Does the frozen engine compute an interaction term for ratio-metric decompositions?**
+   Yes — `ratio_decomposition` in `attribution.py` computes `inter = ((rate_act - rate_exp) * (w_act - w_exp)).fillna(0)` and returns `interaction_total: inter.sum()`.
+
+2. **Is it in the cached `investigate()` result?**
+   No — `validate_segments` stores only `mix_total` and `within_total` in the MIX Result's
+   `detail` string; `interaction_total` is discarded before `investigate()` returns and is
+   not in any Result field or in the dict the agent receives.
+
+3. **Was it rendered?**
+   No — `agent/render.py` has no mention of the interaction term; adding it would require
+   changing the frozen engine.
+
+---
+
+### 4.5.4 Date-level changes v1→v2
+
+30 dates changed.  25 are losses (all incidents except I6); 5 are gains (I6 all dates).
+Every change is explained by one of two reasons:
+
+- **mix_overcorrection** (25 dates): pattern changed localized→mix; the correct pattern is
+  not mix.  Score A lost on 14 of these 25 dates (target segment absent from claims).
+  Score B top-1 lost on 13 dates (requiring `pattern_correct=True`, which fails when pattern
+  is wrong).
+- **mix_correct** (5 dates): I6, pattern changed localized→mix; correct pattern is mix.
+  Score B pattern +GAIN on all 5 dates.  No top-1/top-3 change (I6 has no top-1 by
+  construction — mix rows have no ranked segment target).
+
+| incident | date | Score A | Score B pat | Score B top-1 | reason |
+|---|---|---|---|---|---|
+| I1 | 2017-01-26 | same | -LOSS | -LOSS | mix_overcorrection |
+| I1 | 2017-03-16 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I1 | 2017-06-13 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I1 | 2017-07-05 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I2 | 2016-10-25 | same | -LOSS | same | mix_overcorrection |
+| I2 | 2016-11-14 | -LOSS | -LOSS | same | mix_overcorrection |
+| I2 | 2017-02-02 | same | -LOSS | -LOSS | mix_overcorrection |
+| I2 | 2017-03-31 | same | -LOSS | -LOSS | mix_overcorrection |
+| I2 | 2017-05-22 | same | -LOSS | same | mix_overcorrection |
+| I3 | 2016-11-21 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I3 | 2017-02-27 | -LOSS | -LOSS | same | mix_overcorrection |
+| I3 | 2017-03-10 | same | -LOSS | same | mix_overcorrection |
+| I3 | 2017-03-30 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I3 | 2017-05-01 | -LOSS | -LOSS | same | mix_overcorrection |
+| I3b | 2017-01-23 | same | -LOSS | same | mix_overcorrection |
+| I5 | 2016-11-02 | -LOSS | -LOSS | same | mix_overcorrection |
+| I5 | 2016-12-01 | same | -LOSS | same | mix_overcorrection |
+| I5 | 2017-01-10 | same | -LOSS | same | mix_overcorrection |
+| I5 | 2017-02-06 | same | -LOSS | -LOSS | mix_overcorrection |
+| I5 | 2017-03-08 | same | -LOSS | -LOSS | mix_overcorrection |
+| I6 | 2016-11-04 | same | +GAIN | — | mix_correct |
+| I6 | 2016-12-02 | same | +GAIN | — | mix_correct |
+| I6 | 2017-01-11 | same | +GAIN | — | mix_correct |
+| I6 | 2017-02-07 | same | +GAIN | — | mix_correct |
+| I6 | 2017-03-09 | same | +GAIN | — | mix_correct |
+| I7 | 2017-02-01 | same | -LOSS | -LOSS | mix_overcorrection |
+| I7 | 2017-02-08 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I7 | 2017-05-23 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+| I7 | 2017-06-08 | same | -LOSS | -LOSS | mix_overcorrection |
+| I7 | 2017-06-28 | -LOSS | -LOSS | -LOSS | mix_overcorrection |
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,
