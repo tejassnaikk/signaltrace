@@ -23,7 +23,7 @@ _VERDICT_TO_CLAIM_AS: dict[str, str] = {
     "strong": "strong",
     "plausible": "plausible",
     "material_untested": "untested",
-    "arithmetic": "exact",
+    "arithmetic": "mix",
 }
 
 
@@ -77,6 +77,9 @@ def render_test_dimension(rows: list[dict]) -> dict:
                 "eligible": r.get("eligible"),
                 "q": r.get("q_value"),
             })
+
+    # Segment rows first (existing order preserved within each group), mix row last.
+    citable.sort(key=lambda r: 0 if r["kind"] == "segment" else 1)
 
     if n_skip:
         context.append({"note": f"{n_skip} immaterial row(s) omitted (contribution < 5%)"})

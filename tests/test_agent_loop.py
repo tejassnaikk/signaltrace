@@ -50,7 +50,7 @@ _VERDICT_TO_STRENGTH = {
     "strong": "strong",
     "plausible": "plausible",
     "material_untested": "untested",
-    "arithmetic": "exact",
+    "arithmetic": "mix",
 }
 
 _STRENGTH_MAP = {
@@ -481,7 +481,7 @@ def test_c_exhaustive_path_with_two_repairs_ok() -> None:
 # ------------------------------------------------------------------ #
 
 def test_exact_strength_accepted_for_mix_row() -> None:
-    """A claim citing a device mix row with strength='exact' is accepted."""
+    """A claim citing a device mix row with strength='mix' is accepted (v4: evidence='mix')."""
     iid, date = "I6", "2016-11-04"  # I6: conversion_rate device mix incident
     con = build_incident_con(iid, date)
     session = ToolSession(date, con)
@@ -489,7 +489,7 @@ def test_exact_strength_accepted_for_mix_row() -> None:
     rows = session.test_dimension("conversion_rate", "device")
     mix_row = next((r for r in rows["citable"] if r["kind"] == "mix"), None)
     assert mix_row is not None, "No mix row in citable block for conversion_rate x device on I6/2016-11-04"
-    assert mix_row["evidence"] == "exact", f"Expected evidence='exact', got {mix_row.get('evidence')!r}"
+    assert mix_row["evidence"] == "mix", f"Expected evidence='mix', got {mix_row.get('evidence')!r}"
 
     responses = [
         {"tool_calls": [{"name": "test_dimension", "args": {"metric": "conversion_rate", "dimension": "device"}}]},
@@ -501,7 +501,7 @@ def test_exact_strength_accepted_for_mix_row() -> None:
                     "claims": [{
                         "entry_id": mix_row["short_id"],
                         "direction": mix_row["direction"],
-                        "strength": "exact",
+                        "strength": "mix",
                     }],
                     "narrative": "Device mix shift drove conversion_rate change.",
                 },
@@ -536,7 +536,7 @@ def test_i6_mix_pattern_passes_score_b() -> None:
                     "claims": [{
                         "entry_id": mix_row["short_id"],
                         "direction": mix_row["direction"],
-                        "strength": "exact",
+                        "strength": "mix",
                     }],
                     "narrative": "Device mix shift.",
                 },
@@ -1407,18 +1407,134 @@ def test_n_v3_patterns_identical_to_v1() -> None:
         cwd=str(Path(__file__).parent.parent),
     ).decode()
 
-    from agent.prompt import SYSTEM_PROMPT as v3_prompt, VERSION as v3_version
-    assert v3_version == "v3", f"Expected VERSION='v3', got {v3_version!r}"
+    v3_source = subprocess.check_output(
+        ["git", "show", "49b21cc:agent/prompt.py"],
+        cwd=str(Path(__file__).parent.parent),
+    ).decode()
 
-    def extract_patterns(prompt: str) -> str:
-        m = re.search(r"(PATTERNS\n.*?)(?=\n[A-Z])", prompt, re.DOTALL)
+    def extract_patterns(source: str) -> str:
+        prompt_m = re.search(r'SYSTEM_PROMPT = """\\\n(.*?)"""', source, re.DOTALL)
+        assert prompt_m, "Could not extract SYSTEM_PROMPT"
+        text = prompt_m.group(1)
+        m = re.search(r"(PATTERNS\n.*?)(?=\n[A-Z])", text, re.DOTALL)
         assert m, "PATTERNS section not found"
         return m.group(1)
 
-    v1_prompt = re.search(r'SYSTEM_PROMPT = """\\\n(.*?)"""', v1_source, re.DOTALL)
-    assert v1_prompt, "Could not extract v1 SYSTEM_PROMPT"
-    v1_text = v1_prompt.group(1)
-
-    assert extract_patterns(v1_text) == extract_patterns(v3_prompt), (
+    assert extract_patterns(v3_source) == extract_patterns(v1_source), (
         "v3 PATTERNS section differs from v1"
     )
+
+
+def test_n_v4_patterns_identical_to_v1() -> None:
+    """v4 PATTERNS section is byte-identical to v1's.
+
+    v4 changes only the strength label for arithmetic rows (exact→mix) and
+    the citable-block ordering.  PATTERNS must stay byte-identical to v1.
+    """
+    import re
+    import subprocess
+
+    v1_source = subprocess.check_output(
+        ["git", "show", "2ff263c:agent/prompt.py"],
+        cwd=str(Path(__file__).parent.parent),
+    ).decode()
+
+    from agent.prompt import SYSTEM_PROMPT as v4_prompt, VERSION as v4_version
+    assert v4_version == "v4", f"Expected VERSION='v4', got {v4_version!r}"
+
+    def extract_patterns(source_or_text: str, is_text: bool = False) -> str:
+        if is_text:
+            text = source_or_text
+        else:
+            prompt_m = re.search(r'SYSTEM_PROMPT = """\\\n(.*?)"""', source_or_text, re.DOTALL)
+            assert prompt_m, "Could not extract SYSTEM_PROMPT"
+            text = prompt_m.group(1)
+        m = re.search(r"(PATTERNS\n.*?)(?=\n[A-Z])", text, re.DOTALL)
+        assert m, "PATTERNS section not found"
+        return m.group(1)
+
+    assert extract_patterns(v4_prompt, is_text=True) == extract_patterns(v1_source), (
+        "v4 PATTERNS section differs from v1"
+    )
+
+
+# ------------------------------------------------------------------ #
+# (o) v4: strength 'mix' for arithmetic rows; 'exact' rejected       #
+# ------------------------------------------------------------------ #
+
+def test_o_v4_mapping_gives_mix_for_arithmetic() -> None:
+    """verdict_to_claim_as('arithmetic') returns 'mix' (v4); 'exact' is not a valid strength."""
+    from agent.render import verdict_to_claim_as, _VERDICT_TO_CLAIM_AS
+    from agent.loop import _STRENGTH_TO_VERDICT, _STRENGTHS
+
+    assert _VERDICT_TO_CLAIM_AS["arithmetic"] == "mix", (
+        f"arithmetic must map to 'mix', got {_VERDICT_TO_CLAIM_AS['arithmetic']!r}"
+    )
+    assert verdict_to_claim_as("arithmetic") == "mix"
+    assert "mix" in _STRENGTH_TO_VERDICT, "'mix' must be a valid strength in _STRENGTH_TO_VERDICT"
+    assert _STRENGTH_TO_VERDICT["mix"] == "arithmetic"
+    assert "exact" not in _STRENGTH_TO_VERDICT, "'exact' must no longer be a valid strength"
+    assert "mix" in _STRENGTHS, "'mix' must be in _STRENGTHS enum"
+    assert "exact" not in _STRENGTHS, "'exact' must not be in _STRENGTHS enum"
+
+
+def test_o_v4_exact_strength_rejected() -> None:
+    """strength='exact' is now rejected as invalid_strength (v4 change)."""
+    iid, date = "I6", "2016-11-04"
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    rows = session.test_dimension("conversion_rate", "device")
+    mix_row = next((r for r in rows["citable"] if r["kind"] == "mix"), None)
+    assert mix_row is not None, "No mix row found"
+
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": "conversion_rate", "dimension": "device"}}]},
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {
+                    "pattern": "mix",
+                    "claims": [{
+                        "entry_id": mix_row["short_id"],
+                        "direction": mix_row["direction"],
+                        "strength": "exact",  # no longer valid in v4
+                    }],
+                    "narrative": "test",
+                },
+            }]
+        },
+    ]
+    result = run_agent(session, FakeClient(responses), budget=14)
+    assert result["status"] == "ok"
+    assert result["n_rejected"] == 1, f"Expected 1 rejected, got {result['n_rejected']}"
+    assert any("invalid_strength" in r.get("reason", "") for r in result["rejected"]), (
+        f"Expected invalid_strength; got {result['rejected']}"
+    )
+    con.close()
+
+
+@pytest.mark.parametrize("iid,date", _ALL_DEV_DATES)
+def test_o_v4_mix_rows_last_in_citable_block(iid: str, date: str) -> None:
+    """Mix rows appear after all segment rows in every citable block (v4 ordering)."""
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    for m in REVENUE_FACTORS:
+        for d in DIMENSIONS:
+            rendered = session.test_dimension(m, d)
+            if isinstance(rendered, dict) and "error" in rendered:
+                continue
+            citable = rendered["citable"]
+            # Find the last segment row and first mix row
+            last_segment_idx = max(
+                (i for i, r in enumerate(citable) if r["kind"] == "segment"), default=-1
+            )
+            first_mix_idx = min(
+                (i for i, r in enumerate(citable) if r["kind"] == "mix"), default=len(citable)
+            )
+            assert last_segment_idx < first_mix_idx, (
+                f"{iid}/{date} ({m},{d}): mix row at index {first_mix_idx} "
+                f"appears before segment row at index {last_segment_idx}"
+            )
+    con.close()

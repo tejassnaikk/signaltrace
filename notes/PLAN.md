@@ -2220,6 +2220,44 @@ hidden from the citable block, changing the model's selection landscape.
 
 ---
 
+## 4.8 Prompt v4 (mix-row salience: label 'mix', listed last)
+
+**Slot:** v4 is the last prompt slot (PLAN 4.2 budget exhausted after this run).
+
+**Hypothesis:** mix rows are too salient in v3's citable block because they carry
+`evidence="exact"` — the highest-confidence label among non-statistical rows — and
+appear in the order the engine returns them (sometimes first or mid-list).  The
+model consistently selects the mix row over the within-row target when both are
+citable.
+
+**Motivating counts from v3 (PLAN 4.7):**
+- I3 mix_substitution on 4/5 dates: the model cites the aov/channel mix row
+  (`arithmetic/exact`, kind=mix) instead of Direct (`material_untested`, kind=segment).
+  Direct is citable on all 4 dates but never submitted; I3 Score A = 0/5 in v3.
+- I2/2016-11-14 and I7/2017-05-23: same claim-selection shift mechanism;
+  target segment (Referral/CR) absent from submitted claims.
+
+**Changes (v3 → v4):**
+1. **Strength label:** `"arithmetic": "exact"` → `"arithmetic": "mix"` in
+   `_VERDICT_TO_CLAIM_AS` (render.py, single source of truth).  The checker
+   derives `_STRENGTH_TO_VERDICT` from this mapping, so `"mix"` is accepted only
+   for `verdict=arithmetic` rows; `"exact"` is now `invalid_strength`.
+   Prompt TOOLS text updated: `(strong / plausible / untested / mix)`.
+2. **Ordering:** segment rows listed first (existing order preserved within the
+   group), mix row appended last in every citable block (`render_test_dimension`
+   stable-sorts by `kind`).
+
+**Note:** These two salience changes are tested together and cannot be separated
+within the v4 slot.  A counterfactual experiment (label change only, or order
+change only) would require an additional prompt slot, which is not available.
+
+**Decision rule after v4 (PLAN 4.2 tie-break protocol):**
+The higher top-1 of v1 and v4 advances to the think on/off test.  Tie-break:
+fewer rejected claims, then fewer failed runs.  The winner of the think on/off
+test is frozen as `agent-frozen`.  v1 is the current leader at top-1=16.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,

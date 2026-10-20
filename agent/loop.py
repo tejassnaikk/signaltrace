@@ -26,7 +26,7 @@ _ALLOWED_METRICS = list(REVENUE_FACTORS)
 _ALLOWED_DIMENSIONS = list(DIMENSIONS)
 _PATTERNS = ("localized", "broad", "mix", "none")
 _DIRECTIONS = ("up", "down")
-_STRENGTHS = ("strong", "plausible", "untested", "exact")
+_STRENGTHS = ("strong", "plausible", "untested", "mix")
 
 # Derived from render._VERDICT_TO_CLAIM_AS so the two cannot drift apart.
 # Maps strength word → the ledger verdict it must match.
@@ -127,7 +127,7 @@ _TOOLS = [
                                     "enum": list(_STRENGTHS),
                                     "description": (
                                         "Copy the evidence word from the Citable row "
-                                        "(strong / plausible / untested / exact)."
+                                        "(strong / plausible / untested / mix)."
                                     ),
                                 },
                             },
