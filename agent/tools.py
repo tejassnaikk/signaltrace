@@ -91,7 +91,7 @@ class ToolSession:
     records only what has been revealed; the agent never receives it.
     """
 
-    def __init__(self, date, con) -> None:
+    def __init__(self, date, con, *, render_fn=None, render_ledger_fn=None) -> None:
         """
         Parameters
         ----------
@@ -100,8 +100,14 @@ class ToolSession:
         con : duckdb.DuckDBPyConnection
             Read-only real connection or harness-injected in-memory connection.
             The session never opens a DB itself.
+        render_fn : callable | None
+            Override for render_test_dimension.  None → v4 default.
+        render_ledger_fn : callable | None
+            Override for render_ledger_summary.  None → v4 default.
         """
         self._date = pd.Timestamp(date)
+        self._render_fn = render_fn or render_test_dimension
+        self._render_ledger_fn = render_ledger_fn or render_ledger_summary
 
         self._engine_result = investigate(
             self._date, con=con, verbose=False,
@@ -183,7 +189,7 @@ class ToolSession:
         key = (metric, dimension)
         if key in self._revealed:
             # render again from raw cache — repeat calls are idempotent
-            rendered = render_test_dimension(self._revealed[key])
+            rendered = self._render_fn(self._revealed[key])
             _assert_serializable(rendered)
             return rendered
 
@@ -206,14 +212,14 @@ class ToolSession:
             )
 
         self._revealed[key] = rows  # raw rows, for checker and repeat-call cache
-        rendered = render_test_dimension(rows)
+        rendered = self._render_fn(rows)
         _assert_serializable(rendered)
         return rendered
 
     def get_ledger_summary(self) -> list[dict]:
         """Compact list of non-immaterial harness Ledger entries recorded so far."""
         self._call_counts["get_ledger_summary"] += 1
-        result = render_ledger_summary(self._ledger.entries)
+        result = self._render_ledger_fn(self._ledger.entries)
         _assert_serializable(result)
         return result
 

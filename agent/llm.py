@@ -28,6 +28,7 @@ class ChatResult:
         prompt_eval_count: int | None = None,
         eval_count: int | None = None,
         thinking: str | None = None,
+        done_reason: str | None = None,
     ) -> None:
         self.content = content
         # Each element: {"name": str, "args": dict}
@@ -37,6 +38,8 @@ class ChatResult:
         # Thinking content from Qwen3 hybrid mode.  Stored in the trace only;
         # NEVER appended to the conversation history sent back to the model.
         self.thinking = thinking
+        # "length" when the model hit num_predict; "stop" for normal completion.
+        self.done_reason = done_reason
 
     @property
     def thinking_tokens(self) -> int:
@@ -71,7 +74,10 @@ class OllamaClient:
         # this lets run_agent.py override think=True for the think-mode test
         # without touching the frozen agent/config.py module.
         think = self._config.get("think", False)
-        options_copy = dict(OPTIONS)
+        # Prefer options from the stored config (allows num_predict override for
+        # think=True without touching the frozen agent/config.py module).
+        cfg_options = self._config.get("options")
+        options_copy = dict(cfg_options) if cfg_options else dict(OPTIONS)
         n_messages = len(messages)
         request_size_chars = sum(len(json.dumps(m, default=str)) for m in messages)
 
@@ -101,12 +107,14 @@ class OllamaClient:
         ]
         # Extract thinking content; never included in messages sent back to model.
         thinking = getattr(msg, "thinking", None) or None
+        done_reason = getattr(resp, "done_reason", None)
         return ChatResult(
             content=msg.content,
             tool_calls=tool_calls,
             prompt_eval_count=getattr(resp, "prompt_eval_count", None),
             eval_count=getattr(resp, "eval_count", None),
             thinking=thinking,
+            done_reason=done_reason,
         )
 
 
@@ -138,6 +146,7 @@ class FakeClient:
             content=r.get("content"),
             tool_calls=r.get("tool_calls", []),
             thinking=r.get("thinking"),
+            done_reason=r.get("done_reason"),
         )
 
     @property

@@ -30,7 +30,7 @@ sys.path.insert(0, ROOT)
 from agent.config import config as _agent_config, _verify_pinned_digest
 from agent.llm import OllamaClient
 from agent.loop import run_agent
-from agent.prompt import VERSION as PROMPT_VERSION
+from agent.versions import get_version
 from evaluation.arm_neutral import (
     Answer, Claim, c1_claim_counts, check_answer, engine_answer,
     load_ground_truth, score_a, score_b,
@@ -210,6 +210,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--think", action="store_true",
                         help="Enable Qwen3 think mode; overrides THINK=False in config. "
                              "Produces a distinct config_hash from the think=False run.")
+    parser.add_argument("--version", choices=["v1", "v4"], default="v4",
+                        help="Agent version (prompt + rendering + strength mapping). "
+                             "Default: v4.  Use v1 for the pre-registered think test.")
     args = parser.parse_args(argv)
 
     # Heldout guard
@@ -231,13 +234,17 @@ def main(argv: list[str] | None = None) -> None:
 
     # Verify pinned digest at run start (fails loudly if model changed or Ollama down)
     _verify_pinned_digest()
+    version_cfg = get_version(args.version)
     cfg = _agent_config()
     if args.think:
-        # Override think=True without touching the frozen agent/config.py module.
-        # The dict copy ensures the config_hash differs from the think=False run.
-        cfg = {**cfg, "think": True}
+        # Override think=True and raise num_predict to 4096 (baseline 2048 is too
+        # tight once thinking tokens count against the cap).  Context guard is
+        # tightened to 11,500 (vs 13,000) so prompt + response always fit in 16,384.
+        # Both overrides avoid touching the frozen agent/config.py module.
+        new_options = {**cfg["options"], "num_predict": 4096}
+        cfg = {**cfg, "think": True, "options": new_options}
     client = OllamaClient(cfg)
-    chash = _config_hash(cfg, PROMPT_VERSION)
+    chash = _config_hash(cfg, version_cfg.prompt_version)
 
     out_path = _build_out_path(RESULTS_DIR, args.split, chash, args.limit)
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -289,8 +296,16 @@ def main(argv: list[str] | None = None) -> None:
                 t_start = time.time()
                 try:
                     con = build_incident_con(iid, date)
-                    session = ToolSession(date, con)
-                    result = run_agent(session, client)
+                    session = ToolSession(
+                        date, con,
+                        render_fn=version_cfg.render_test_dimension,
+                        render_ledger_fn=version_cfg.render_ledger_summary,
+                    )
+                    context_limit = 11500 if args.think else None
+                    run_kw = {"version_cfg": version_cfg}
+                    if context_limit is not None:
+                        run_kw["context_limit"] = context_limit
+                    result = run_agent(session, client, **run_kw)
                     ledger = session._harness_ledger()
                     scores = _score_run(result, iid, ledger)
                     con.close()
@@ -333,7 +348,7 @@ def main(argv: list[str] | None = None) -> None:
                     "checker": scores["checker"],
                     "failed_run": scores["failed_run"],
                     "config": cfg,
-                    "prompt_version": PROMPT_VERSION,
+                    "prompt_version": version_cfg.prompt_version,
                     "git_head": git_head,
                 }
 

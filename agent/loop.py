@@ -20,6 +20,7 @@ from agent.llm import OllamaRequestError
 from agent.prompt import SYSTEM_PROMPT
 from agent.render import _VERDICT_TO_CLAIM_AS, verdict_to_claim_as
 from agent.tools import _row_direction
+# VersionCfg is imported lazily inside run_agent to avoid circular-import risk
 from metrics.dependency_graph import DIMENSIONS, REVENUE_FACTORS
 
 _ALLOWED_METRICS = list(REVENUE_FACTORS)
@@ -177,14 +178,25 @@ def _validate_submit_schema(args: Any) -> str | None:
 
 
 def _check_claims(
-    raw_claims: list[dict], ledger
+    raw_claims: list[dict],
+    ledger,
+    strength_to_verdict: dict | None = None,
+    verdict_to_claim_as_fn=None,
 ) -> tuple[list[dict], list[dict]]:
     """Validate each claim against the harness ledger.
 
     Returns (accepted, rejected).  Each accepted item is a plain dict with
     all fields hydrated from the ledger; rejected items include a 'reason'.
     The loop never raises here — bad claims are silently removed.
+
+    strength_to_verdict and verdict_to_claim_as_fn default to the v4 mappings;
+    pass version-specific ones when running v1.
     """
+    if strength_to_verdict is None:
+        strength_to_verdict = _STRENGTH_TO_VERDICT
+    if verdict_to_claim_as_fn is None:
+        verdict_to_claim_as_fn = verdict_to_claim_as
+
     by_id = {e.evidence_id: e for e in ledger.entries}
     accepted: list[dict] = []
     rejected: list[dict] = []
@@ -197,8 +209,8 @@ def _check_claims(
         if direction not in _DIRECTIONS:
             rejected.append({**c, "reason": f"invalid_direction: {direction!r} not in {list(_DIRECTIONS)}"})
             continue
-        if strength not in _STRENGTH_TO_VERDICT:
-            rejected.append({**c, "reason": f"invalid_strength: {strength!r} not in {list(_STRENGTH_TO_VERDICT)}"})
+        if strength not in strength_to_verdict:
+            rejected.append({**c, "reason": f"invalid_strength: {strength!r} not in {list(strength_to_verdict)}"})
             continue
 
         entry = by_id.get(entry_id)
@@ -207,7 +219,7 @@ def _check_claims(
             continue
 
         # Context rows have no short_id shown to the model; treat as invisible.
-        if verdict_to_claim_as(entry.verdict) == "-":
+        if verdict_to_claim_as_fn(entry.verdict) == "-":
             rejected.append({**c, "reason": f"no ledger entry {entry_id!r}"})
             continue
 
@@ -220,7 +232,7 @@ def _check_claims(
             })
             continue
 
-        required_verdict = _STRENGTH_TO_VERDICT[strength]
+        required_verdict = strength_to_verdict[strength]
         if entry.verdict != required_verdict:
             rejected.append({
                 **c, "reason":
@@ -276,13 +288,18 @@ _MAX_CONSECUTIVE_TEXT_TURNS = 2  # consecutive text-only turns before failed_no_
 
 def run_agent(session, client, budget: int = 14,
               context_limit: int = _CONTEXT_GUARD_TOKENS,
-              max_turns: int = _MAX_LLM_TURNS) -> dict:
+              max_turns: int = _MAX_LLM_TURNS,
+              version_cfg=None) -> dict:
     """Run the evidence-constrained agent loop.
 
     Budget counts tool calls (including submit_answer and repair attempts).
     The exhaustive path (9 test_dimension + get_factor_decomposition +
     get_ledger_summary) plus 2 malformed repairs + 1 valid submit = 14 calls,
     which is exactly the default budget.
+
+    version_cfg : VersionCfg | None
+        When provided, uses version-specific prompt, tool schemas, and strength
+        mapping.  None uses the v4 module-level defaults (backward compatible).
 
     Returns a dict with:
         answer      : plain dict (pattern, claims, primary, narrative) or None
@@ -294,8 +311,14 @@ def run_agent(session, client, budget: int = 14,
         rejected    : list of rejected claim dicts with "reason"
         error       : str (traceback) for failed_error, else None
     """
+    # Version-specific overrides; None = v4 module-level defaults (unchanged).
+    _sys_prompt = version_cfg.system_prompt if version_cfg else SYSTEM_PROMPT
+    _tools = version_cfg.tools if version_cfg else _TOOLS
+    _s_to_v = version_cfg.strength_to_verdict if version_cfg else None
+    _v_to_ca = version_cfg.verdict_to_claim_as if version_cfg else None
+
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": _sys_prompt},
         {"role": "user", "content": f"Investigate {session._date:%Y-%m-%d}."},
     ]
 
@@ -323,7 +346,7 @@ def run_agent(session, client, budget: int = 14,
                 status = "failed_context"
                 break
 
-            resp = client.chat(messages, _TOOLS)
+            resp = client.chat(messages, _tools)
             total_llm_turns += 1
 
             # Record assistant turn in messages — thinking content is intentionally
@@ -343,6 +366,7 @@ def run_agent(session, client, budget: int = 14,
                 "prompt_eval_count": resp.prompt_eval_count,
                 "eval_count": resp.eval_count,
                 "thinking_tokens": resp.thinking_tokens,
+                "done_reason": resp.done_reason,
             })
 
             if not resp.tool_calls:
@@ -390,7 +414,11 @@ def run_agent(session, client, budget: int = 14,
                         break
 
                     # Valid schema — apply semantic checker
-                    accepted, bad = _check_claims(args["claims"], session._harness_ledger())
+                    accepted, bad = _check_claims(
+                        args["claims"], session._harness_ledger(),
+                        strength_to_verdict=_s_to_v,
+                        verdict_to_claim_as_fn=_v_to_ca,
+                    )
                     n_rejected += len(bad)
                     rejected_all.extend(bad)
 

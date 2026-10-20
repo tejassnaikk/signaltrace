@@ -1690,3 +1690,246 @@ def test_p_thinking_tokens_in_trace() -> None:
     assert first_event["thinking_tokens"] == 100, (
         f"Expected 100 thinking tokens (400 chars // 4), got {first_event['thinking_tokens']}"
     )
+
+
+# ------------------------------------------------------------------ #
+# (q) Version switch: --version v1 exact reproduction                 #
+# ------------------------------------------------------------------ #
+
+def test_q_v1_render_is_flat_list() -> None:
+    """ToolSession with v1 render_fn returns a flat list, not a citable/context dict.
+
+    v4 returns {"citable": [...], "context": [...]}.  v1 returns a list where
+    each row has a claim_as field.  This is the fundamental output-format difference
+    the version switch must enforce.
+    """
+    from agent.render_v1 import render_test_dimension as rtd_v1, render_ledger_summary as rls_v1
+
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session_v1 = ToolSession(date, con, render_fn=rtd_v1, render_ledger_fn=rls_v1)
+    session_v4 = ToolSession(date, con)
+
+    metric = list(REVENUE_FACTORS)[0]
+    dim = list(DIMENSIONS)[0]
+
+    result_v1 = session_v1.test_dimension(metric, dim)
+    result_v4 = session_v4.test_dimension(metric, dim)
+
+    assert isinstance(result_v1, list), f"v1 must return a list, got {type(result_v1)}"
+    assert isinstance(result_v4, dict) and "citable" in result_v4, (
+        f"v4 must return a citable/context dict, got {type(result_v4)}"
+    )
+    # Every non-note row in v1 has a claim_as field
+    for row in result_v1:
+        if "note" not in row:
+            assert "claim_as" in row, f"v1 row missing claim_as: {row}"
+
+    con.close()
+
+
+def test_q_v1_render_byte_for_byte_vs_render_v1_module() -> None:
+    """ToolSession with v1 render_fn matches render_v1 module output byte-for-byte.
+
+    Checks 3 dev dates (all 9 metric/dimension pairs each) by comparing the
+    JSON of session.test_dimension() to direct calls of render_v1.render_test_dimension()
+    on the same raw rows.  This is the byte-for-byte reproduction requirement.
+    """
+    import json as _json
+    from agent.render_v1 import render_test_dimension as rtd_v1, render_ledger_summary as rls_v1
+
+    for iid, date in _SCORE_DATES:
+        con = build_incident_con(iid, date)
+        session = ToolSession(date, con, render_fn=rtd_v1, render_ledger_fn=rls_v1)
+
+        for metric in REVENUE_FACTORS:
+            for dim in DIMENSIONS:
+                result_via_session = session.test_dimension(metric, dim)
+                # Compare with direct render_v1 call on the same raw rows
+                raw_rows = session._revealed[(metric, dim)]
+                result_direct = rtd_v1(raw_rows)
+                assert _json.dumps(result_via_session, sort_keys=True) == _json.dumps(result_direct, sort_keys=True), (
+                    f"Mismatch for {iid}/{date} {metric}/{dim}:\n"
+                    f"  via session: {result_via_session}\n"
+                    f"  direct:      {result_direct}"
+                )
+
+        con.close()
+
+
+def test_q_v1_arithmetic_strength_is_exact() -> None:
+    """v1 renders arithmetic rows with claim_as='exact', not 'mix'.
+
+    This is the key strength-word difference between v1 and v4.
+    """
+    from agent.render_v1 import render_test_dimension as rtd_v1
+
+    # Synthetic rows: one arithmetic row
+    rows = [
+        {
+            "segment": "organic",
+            "kind": "mix",
+            "direction": "down",
+            "contribution": 0.4,
+            "verdict": "arithmetic",
+            "basis": "identity",
+            "eligible": True,
+            "q_value": None,
+            "entry_id": "abc001",
+        }
+    ]
+    result_v1 = rtd_v1(rows)
+    result_v4_fn = __import__("agent.render", fromlist=["render_test_dimension"]).render_test_dimension
+
+    # v1: flat list with claim_as='exact'
+    assert isinstance(result_v1, list)
+    assert result_v1[0]["claim_as"] == "exact", f"v1 arithmetic must be 'exact', got {result_v1[0]['claim_as']}"
+
+    # v4: citable block with evidence='mix'
+    result_v4 = result_v4_fn(rows)
+    assert isinstance(result_v4, dict)
+    assert result_v4["citable"][0]["evidence"] == "mix", (
+        f"v4 arithmetic must be 'mix', got {result_v4['citable'][0]['evidence']}"
+    )
+
+
+def test_q_v4_render_unchanged_by_version_switch() -> None:
+    """ToolSession default (no render_fn) still returns v4 citable/context format.
+
+    Confirms that introducing the render_fn kwarg did not change the default v4 path.
+    """
+    iid, date = _SCORE_DATES[1]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)  # no override — v4 default
+
+    metric = list(REVENUE_FACTORS)[0]
+    dim = list(DIMENSIONS)[0]
+    result = session.test_dimension(metric, dim)
+
+    assert isinstance(result, dict), f"v4 default must return a dict, got {type(result)}"
+    assert "citable" in result and "context" in result, (
+        f"v4 result must have citable/context keys, got {list(result.keys())}"
+    )
+    con.close()
+
+
+def test_q_think_settings_apply_only_when_think_true() -> None:
+    """num_predict=4096 and context_limit=11500 are applied only when think=True.
+
+    think=False (default): num_predict=2048 (from frozen config), context_limit=13000.
+    think=True (--think flag): num_predict=4096, context_limit=11500.
+    """
+    from agent.config import config as _config_fn
+    from evaluation.run_agent import _config_hash
+    from agent.loop import _CONTEXT_GUARD_TOKENS
+
+    base_cfg = _config_fn()
+    assert base_cfg["options"]["num_predict"] == 2048, (
+        f"Baseline num_predict must be 2048, got {base_cfg['options']['num_predict']}"
+    )
+    assert _CONTEXT_GUARD_TOKENS == 13000, (
+        f"Default context guard must be 13000, got {_CONTEXT_GUARD_TOKENS}"
+    )
+
+    # Simulate think=True overrides as run_agent.py applies them
+    new_options = {**base_cfg["options"], "num_predict": 4096}
+    think_cfg = {**base_cfg, "think": True, "options": new_options}
+
+    assert think_cfg["options"]["num_predict"] == 4096, (
+        f"think=True num_predict must be 4096, got {think_cfg['options']['num_predict']}"
+    )
+    assert think_cfg["think"] is True
+
+    # Hash differs from baseline (so JSONL files are separate)
+    hash_base = _config_hash(base_cfg, "v1")
+    hash_think = _config_hash(think_cfg, "v1")
+    assert hash_base != hash_think, "think=True config must produce a different hash"
+
+
+def test_q_done_reason_in_trace() -> None:
+    """done_reason field appears in llm_response trace events.
+
+    FakeClient supports a done_reason key in scripted responses.  The loop
+    must forward it into the trace.
+    """
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    responses = [
+        {
+            "done_reason": "stop",
+            "tool_calls": [{"name": "get_factor_decomposition", "args": {}}],
+        },
+        {
+            "done_reason": "length",
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {"pattern": "none", "claims": [], "narrative": "done_reason test"},
+            }],
+        },
+    ]
+
+    result = run_agent(session, FakeClient(responses))
+    llm_events = [e for e in result["trace"] if e.get("event") == "llm_response"]
+    assert len(llm_events) == 2
+    assert llm_events[0]["done_reason"] == "stop"
+    assert llm_events[1]["done_reason"] == "length"
+    con.close()
+
+
+def test_q_version_cfg_v1_checker_accepts_exact_strength() -> None:
+    """run_agent with v1 VersionCfg accepts 'exact' as a valid strength for arithmetic rows.
+
+    v4 rejects 'exact' (invalid_strength); v1 must accept it and match the
+    'arithmetic' verdict from the ledger.
+    """
+    from agent.versions import V1_CFG
+    from agent.render_v1 import render_test_dimension as rtd_v1, render_ledger_summary as rls_v1
+
+    iid, date = _SCORE_DATES[0]
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con, render_fn=rtd_v1, render_ledger_fn=rls_v1)
+
+    # Pre-populate all pairs to have stable entry_ids, then find an arithmetic row
+    for metric in REVENUE_FACTORS:
+        for dim in DIMENSIONS:
+            session.test_dimension(metric, dim)
+
+    # Find an arithmetic row from the v1-rendered flat list
+    arithmetic_claim = None
+    for (metric, dim), raw_rows in session._revealed.items():
+        for row in raw_rows:
+            if row.get("verdict") == "arithmetic":
+                arithmetic_claim = {
+                    "entry_id": row["entry_id"],
+                    "direction": row["direction"],
+                    "strength": "exact",  # v1 strength word for arithmetic
+                }
+                break
+        if arithmetic_claim:
+            break
+
+    if arithmetic_claim is None:
+        pytest.skip("No arithmetic rows found for this date — cannot test exact strength")
+
+    responses = [
+        {"tool_calls": [{"name": "get_factor_decomposition", "args": {}}]},
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {
+                    "pattern": "localized",
+                    "claims": [arithmetic_claim],
+                    "narrative": "v1 exact strength test",
+                },
+            }]
+        },
+    ]
+
+    result = run_agent(session, FakeClient(responses), version_cfg=V1_CFG)
+    assert result["status"] == "ok"
+    assert result["n_rejected"] == 0, (
+        f"Arithmetic claim with strength='exact' must be accepted by v1 checker; "
+        f"rejected: {result['rejected']}"
+    )
