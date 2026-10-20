@@ -1538,3 +1538,155 @@ def test_o_v4_mix_rows_last_in_citable_block(iid: str, date: str) -> None:
                 f"appears before segment row at index {last_segment_idx}"
             )
     con.close()
+
+
+# ------------------------------------------------------------------ #
+# (p) think=True / think=False setup (PLAN.md Section 4.8 Task 3)    #
+# ------------------------------------------------------------------ #
+
+def test_p_thinking_not_in_history() -> None:
+    """Thinking content from FakeClient responses never appears in conversation history.
+
+    The loop must NOT include resp.thinking in the messages list sent back to
+    the model — it stores thinking in the trace only.  This test verifies the
+    invariant by checking every message in every subsequent call.
+    """
+    THINKING_SENTINEL = "THIS_IS_THINKING_CONTENT_abc123"
+
+    iid, date = _SCORE_DATES[0]  # I1/2017-01-26
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    # Response 1: thinking content present + a tool call
+    # Response 2: submit_answer
+    responses = [
+        {
+            "thinking": THINKING_SENTINEL,
+            "tool_calls": [{"name": "get_factor_decomposition", "args": {}}],
+        },
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {"pattern": "none", "claims": [], "narrative": "thinking test"},
+            }]
+        },
+    ]
+
+    client = FakeClient(responses)
+    run_agent(session, client)
+
+    # Check all messages passed to the second call onwards don't contain the sentinel
+    for call_idx, msgs in enumerate(client.received_messages[1:], start=1):
+        for msg in msgs:
+            for v in msg.values():
+                assert THINKING_SENTINEL not in str(v), (
+                    f"Thinking sentinel found in message at call {call_idx}: {msg}"
+                )
+    con.close()
+
+
+def test_p_think_true_produces_distinct_config_hash() -> None:
+    """think=True and think=False produce different config hashes.
+
+    The hash is a function of the full config dict (including 'think') and the
+    prompt version.  Changing think=False to think=True must change the hash so
+    the two runs land in separate JSONL files.
+    """
+    from agent.config import config as _config_fn
+    from evaluation.run_agent import _config_hash
+
+    cfg_false = {**_config_fn(), "think": False}
+    cfg_true = {**_config_fn(), "think": True}
+
+    hash_false = _config_hash(cfg_false, "v4")
+    hash_true = _config_hash(cfg_true, "v4")
+
+    assert hash_false != hash_true, (
+        f"think=False hash {hash_false!r} must differ from think=True hash {hash_true!r}"
+    )
+
+
+def test_p_think_false_behavior_unchanged() -> None:
+    """think=False runs behave identically to pre-think-support runs.
+
+    A FakeClient run with think=False (no thinking field) must still complete
+    with status=ok and no rejected claims — confirming think=False is a no-op
+    relative to the v4 baseline behavior.
+    """
+    iid, date = _SCORE_DATES[0]  # I1/2017-01-26
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    all_pairs = [(m, d) for m in REVENUE_FACTORS for d in DIMENSIONS]
+    responses = [
+        {"tool_calls": [{"name": "test_dimension", "args": {"metric": m, "dimension": d}}]}
+        for m, d in all_pairs
+    ]
+    # Derive a valid submit from the rendered citable rows
+    for m, d in all_pairs:
+        session.test_dimension(m, d)
+    citable_rows = []
+    for m, d in all_pairs:
+        rr = session.test_dimension(m, d)
+        if isinstance(rr, dict) and "citable" in rr:
+            citable_rows.extend(rr["citable"])
+    claims = [
+        {"entry_id": r["short_id"], "direction": r["direction"], "strength": r["evidence"]}
+        for r in citable_rows[:1]
+    ]
+    responses.append({
+        "tool_calls": [{
+            "name": "submit_answer",
+            "args": {"pattern": "localized", "claims": claims, "narrative": "think=False test"},
+        }]
+    })
+
+    client = FakeClient(responses)
+    result = run_agent(session, client)
+
+    assert result["status"] == "ok", f"Expected ok, got {result['status']}"
+    assert result["n_rejected"] == 0, f"Expected 0 rejected, got {result['n_rejected']}"
+
+    # thinking_tokens trace field exists and is 0 (no thinking content provided)
+    llm_events = [e for e in result["trace"] if e.get("event") == "llm_response"]
+    for ev in llm_events:
+        assert "thinking_tokens" in ev, "llm_response trace event missing thinking_tokens field"
+        assert ev["thinking_tokens"] == 0, (
+            f"Expected thinking_tokens=0 with no thinking, got {ev['thinking_tokens']}"
+        )
+    con.close()
+
+
+def test_p_thinking_tokens_in_trace() -> None:
+    """thinking_tokens in trace reflects the thinking content length estimate.
+
+    When FakeClient returns thinking content, the llm_response trace event must
+    record a non-zero thinking_tokens estimate.
+    """
+    iid, date = _SCORE_DATES[0]  # I1/2017-01-26
+    con = build_incident_con(iid, date)
+    session = ToolSession(date, con)
+
+    thinking_text = "a" * 400  # 400 chars → 100 token estimate
+
+    responses = [
+        {
+            "thinking": thinking_text,
+            "tool_calls": [{"name": "get_factor_decomposition", "args": {}}],
+        },
+        {
+            "tool_calls": [{
+                "name": "submit_answer",
+                "args": {"pattern": "none", "claims": [], "narrative": "thinking tokens test"},
+            }]
+        },
+    ]
+
+    result = run_agent(session, FakeClient(responses))
+
+    llm_events = [e for e in result["trace"] if e.get("event") == "llm_response"]
+    assert len(llm_events) >= 1
+    first_event = llm_events[0]
+    assert first_event["thinking_tokens"] == 100, (
+        f"Expected 100 thinking tokens (400 chars // 4), got {first_event['thinking_tokens']}"
+    )

@@ -207,6 +207,9 @@ def main(argv: list[str] | None = None) -> None:
                         help="Stop after this many (incident, date) pairs (for testing)")
     parser.add_argument("--i-confirm-heldout", action="store_true",
                         help="Required when --split heldout")
+    parser.add_argument("--think", action="store_true",
+                        help="Enable Qwen3 think mode; overrides THINK=False in config. "
+                             "Produces a distinct config_hash from the think=False run.")
     args = parser.parse_args(argv)
 
     # Heldout guard
@@ -229,6 +232,10 @@ def main(argv: list[str] | None = None) -> None:
     # Verify pinned digest at run start (fails loudly if model changed or Ollama down)
     _verify_pinned_digest()
     cfg = _agent_config()
+    if args.think:
+        # Override think=True without touching the frozen agent/config.py module.
+        # The dict copy ensures the config_hash differs from the think=False run.
+        cfg = {**cfg, "think": True}
     client = OllamaClient(cfg)
     chash = _config_hash(cfg, PROMPT_VERSION)
 

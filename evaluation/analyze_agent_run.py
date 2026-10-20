@@ -32,12 +32,13 @@ from investigation.orchestrator import investigate
 
 FORCED_METRICS = ("sessions", "conversion_rate", "aov")
 INCIDENTS = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
-VALID_STRENGTHS = ("strong", "plausible", "untested", "exact")
+VALID_STRENGTHS = ("strong", "plausible", "untested", "exact", "mix")
 STRENGTH_TO_VERDICT = {
     "strong": "strong",
     "plausible": "plausible",
     "untested": "material_untested",
     "exact": "arithmetic",
+    "mix": "arithmetic",
 }
 
 # Score A targets for display
@@ -585,8 +586,9 @@ def generate_report(
         "material_but_uncertain": "not claimable",
         "unsupported": "not claimable",
         "untested": "untested ✓",
-        "arithmetic": "exact (not 'arithmetic')",
-        "exact": "exact ✓",
+        "arithmetic": "mix (not 'arithmetic'; or 'exact' in v0-v3)",
+        "exact": "exact ✓ (v0-v3) / invalid in v4",
+        "mix": "mix ✓ (v4+)",
     }
     for strength, cnt in e["submitted_strengths"].most_common():
         valid = "✓" if strength in VALID_STRENGTHS else "✗"

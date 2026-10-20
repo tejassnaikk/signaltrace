@@ -326,7 +326,9 @@ def run_agent(session, client, budget: int = 14,
             resp = client.chat(messages, _TOOLS)
             total_llm_turns += 1
 
-            # Record assistant turn in messages
+            # Record assistant turn in messages — thinking content is intentionally
+            # excluded here; it lives in the trace only and must never be sent back
+            # to the model, where it would consume context without adding signal.
             asst_msg: dict = {"role": "assistant", "content": resp.content or ""}
             if resp.tool_calls:
                 asst_msg["tool_calls"] = [
@@ -340,6 +342,7 @@ def run_agent(session, client, budget: int = 14,
                 "tool_calls": list(resp.tool_calls),
                 "prompt_eval_count": resp.prompt_eval_count,
                 "eval_count": resp.eval_count,
+                "thinking_tokens": resp.thinking_tokens,
             })
 
             if not resp.tool_calls:

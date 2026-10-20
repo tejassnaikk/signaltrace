@@ -2258,6 +2258,223 @@ test is frozen as `agent-frozen`.  v1 is the current leader at top-1=16.
 
 ---
 
+## 4.9 Dev results: prompt v4
+
+**41 runs (41 dev dates × 1 run), config hash `e1fd6c8f`, prompt version `v4`.**
+Full report: `evaluation/results/agent_dev_e1fd6c8f_report.md`.
+
+### a. Status counts
+
+All 41 runs: `ok`. Zero failures across v1, v2, v3, v4.
+
+| incident | v1 ok | v2 ok | v3 ok | v4 ok |
+|---|---|---|---|---|
+| I1 | 5 | 5 | 5 | 5 |
+| I2 | 5 | 5 | 5 | 5 |
+| I3 | 5 | 5 | 5 | 5 |
+| I3b | 1 | 1 | 1 | 1 |
+| I4 | 5 | 5 | 5 | 5 |
+| I5 | 5 | 5 | 5 | 5 |
+| I6 | 5 | 5 | 5 | 5 |
+| I7 | 5 | 5 | 5 | 5 |
+| C1 | 5 | 5 | 5 | 5 |
+
+### b. Score A per incident (dates out of 5; I3b out of 1)
+
+| incident | target | v0 | v1 | v2 | v3 | v4 | engine dev |
+|---|---|---|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 2/5 | 5/5 | 2/5 | 5/5 | **5/5** | 5/5 |
+| I2 | conversion_rate/channel/Referral | 4/5 | 4/5 | 3/5 | 3/5 | **4/5** | 5/5 |
+| I3 | aov/channel/Direct | 0/5 | 4/5 | 0/5 | 0/5 | **4/5** | 5/5 |
+| I3b | aov/channel/Direct | 0/1 | 0/1 | 0/1 | 0/1 | **0/1** | 0/1 |
+| I5 | conversion_rate/device/desktop | 4/5 | 4/5 | 3/5 | 4/5 | **4/5** | 4/5 |
+| I7 sessions | sessions/channel/Organic Search | 5/5 | 5/5 | 3/5 | 5/5 | **5/5** | 5/5 |
+| I7 CR | conversion_rate/channel/Referral | 5/5 | 5/5 | 2/5 | 4/5 | **5/5** | 5/5 |
+
+v4 recovers I3 (4/5, matching v1) and I7-CR (5/5, +1 over v3) relative to v3.
+I2 also recovers to 4/5 from v3's 3/5.
+
+### c. Score B per incident (pattern / top-1 / top-3)
+
+I7 both-targets-in-top-3: v0 5/5 · v1 5/5 · v2 0/5 · v3 4/5 · **v4 5/5** · engine 3/5.
+
+| inc | v1 pat | v1 t1 | v1 t3 | v3 pat | v3 t1 | v3 t3 | v4 pat | v4 t1 | v4 t3 | eng pat | eng t1 | eng t3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| I1 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | **5/5** | **5/5** | **5/5** | 5/5 | 3/5 | 4/5 |
+| I2 | 5/5 | 2/5 | 4/5 | 5/5 | 1/5 | 3/5 | **5/5** | **1/5** | **3/5** | 5/5 | 5/5 | 5/5 |
+| I3 | 5/5 | 2/5 | 3/5 | 5/5 | 0/5 | 0/5 | **5/5** | **2/5** | **3/5** | 5/5 | 3/5 | 5/5 |
+| I3b | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 | **1/1** | **0/1** | **0/1** | 1/1 | 0/1 | 0/1 |
+| I4 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | **0/5** | **0/5** | **0/5** | 0/5 | 0/5 | 0/5 |
+| I5 | 5/5 | 2/5 | 3/5 | 5/5 | 2/5 | 3/5 | **5/5** | **2/5** | **3/5** | 5/5 | 0/5 | 0/5 |
+| I6 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | **0/5** | **0/5** | **0/5** | 0/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | **5/5** | **5/5** | **5/5** | 5/5 | 4/5 | 5/5 |
+| C1 | 0/5 | — | — | 0/5 | — | — | **0/5** | — | — | 0/5 | — | — |
+
+v4 recovers I3 and I7 top-3 from v3.  I3 top-1 stays 2/5 (same as v1); I2 top-1 falls from 2/5
+to 1/5 relative to v1.
+
+### d. C1: false positives and untested claims
+
+| arm | n runs | false positives | untested claims |
+|---|---|---|---|
+| v1 agent | 5 | 4 | 3 |
+| v2 agent | 5 | 1 | 14 |
+| v3 agent | 5 | 4 | 11 |
+| v4 agent | 5 | 4 | 10 |
+| engine dev | 5 | 1 | 13 |
+
+v4 FP rate (4/5) matches v1 and v3; untested claims (10) slightly lower than v3's 11.
+
+### e. Rejected claims
+
+| version | total rejected | invalid_strength | verdict_mismatch |
+|---|---|---|---|
+| v0 | 729 | 729 | 0 |
+| v1 | 246 | 200 | 46 |
+| v2 | 0 | 0 | 0 |
+| v3 | 0 | 0 | 0 |
+| v4 | 0 | 0 | 0 |
+
+v4 matches v2/v3: zero rejections.  Submitted strengths in v4: untested=92, strong=78,
+mix=57, plausible=14 — all valid.  `mix` (arithmetic/mix strength, v4 new label) is accepted
+without any rejections, confirming the label change works correctly.
+
+### f. Pattern distribution
+
+The v4 PATTERNS section is byte-identical to v1's and v3's; accordingly v4 submits `localized`
+on all 41 dates (same as v1 and v3).  I6 (correct=mix) scores 0/5 pattern.
+
+| pattern | v0 (41 dates) | v1 (41 dates) | v2 (41 dates) | v3 (41 dates) | v4 (41 dates) |
+|---|---|---|---|---|---|
+| localized | 27 | 41 | 1 | 41 | 41 |
+| mix | 0 | 0 | 40 | 0 | 0 |
+| broad | 0 | 0 | 0 | 0 | 0 |
+| none | 7 | 0 | 0 | 0 | 0 |
+| no_answer (failed) | 7 | 0 | 0 | 0 | 0 |
+
+---
+
+### 4.9.1 Date-level changes v1 → v4
+
+7 dates changed.  3 gains, 4 losses.
+
+| incident | date | Score A | Score B top-1 | reason |
+|---|---|---|---|---|
+| I2 | 2016-10-25 | +GAIN | same | mix_salience_fixed: correct top-1 claim now selected |
+| I2 | 2016-11-14 | -LOSS | same | claim_selection_shift: Referral/CR absent |
+| I2 | 2017-03-31 | same | -LOSS | ranking_shift: Referral demoted |
+| I3 | 2016-11-21 | same | -LOSS | mix_substitution_partial: Direct absent (v4 cites mix row) |
+| I3 | 2017-02-27 | same | +GAIN | mix_substitution_fixed: Direct now cited first |
+| I3 | 2017-03-10 | +GAIN | same | mix_substitution_fixed: Direct now accepted |
+| I3 | 2017-05-01 | -LOSS | same | claim_selection_shift: aov/channel absent |
+
+Net: v4 gained 3 dates (I2/2016-10-25, I3/2017-02-27, I3/2017-03-10) and lost 4 dates
+(I2/2016-11-14, I2/2017-03-31, I3/2016-11-21, I3/2017-05-01).
+
+I3 result: v4 reduced but did not eliminate the mix-substitution problem.
+On 2/5 dates it still cites the mix row over Direct; on 2/5 dates it now correctly
+cites Direct first; 1/5 dates the target is absent entirely.
+
+---
+
+### 4.9.2 Selection result (PLAN 4.2 rule applied)
+
+| version | total top-1 | rejected claims | failed runs |
+|---|---|---|---|
+| v0 | 12 | 729 | 21 |
+| v1 | **16** | 246 | 0 |
+| v2 | 1 | 0 | 0 |
+| v3 | 13 | 0 | 0 |
+| v4 | 15 | 0 | 0 |
+| engine | 15 | — | — |
+
+Per-incident top-1:
+
+| incident | v0 | v1 | v2 | v3 | v4 | engine |
+|---|---|---|---|---|---|---|
+| I1 | 2/5 | 5/5 | 1/5 | 5/5 | 5/5 | 3/5 |
+| I2 | 3/5 | 2/5 | 0/5 | 1/5 | 1/5 | 5/5 |
+| I3 | 0/5 | 2/5 | 0/5 | 0/5 | 2/5 | 3/5 |
+| I3b | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 |
+| I5 | 2/5 | 2/5 | 0/5 | 2/5 | 2/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 0/5 | 5/5 | 5/5 | 4/5 |
+| **total** | **12** | **16** | **1** | **13** | **15** | **15** |
+
+**Rule step 1 (highest total top-1): v1=16 > v4=15 → v1 wins.  No tie-break needed.**
+
+**Winner: v1** (config hash `f854dee9`, prompt version `v1`).
+
+v4 closes the gap to v3 (+2 top-1) but does not surpass v1.  The mix-salience hypothesis
+was partially confirmed: relabeling arithmetic rows as `mix` and listing them last
+recovered 2 I3 dates but introduced new losses on I2 and I3.
+
+---
+
+### 4.9.3 Think on/off test setup
+
+The winner is **v1** (`f854dee9`).  The think on/off test runs v1's prompt with
+`think=True` vs the already-completed `think=False` run.
+
+**a. Config option `think=True`.** `run_agent.py --think` overrides `cfg["think"] = True`
+in the dict copy before hashing.  The config hash is derived from `{config: ..., prompt: "v1"}`;
+changing `think` from `False` to `True` produces a distinct hash and a separate
+output file.  `OllamaClient.chat()` reads `think` from `self._config.get("think", False)`
+(changed from the previous module-constant import) so the override takes effect without
+touching the frozen `agent/config.py`.
+
+**b. Thinking output NOT in conversation history.** `loop.py` appends only
+`{"role": "assistant", "content": resp.content}` (plus `tool_calls` if present) to the
+messages list.  `resp.thinking` (extracted via `getattr(msg, "thinking", None)`) is stored
+in `ChatResult.thinking` and recorded in the trace under `thinking_tokens`; it is
+never included in `asst_msg`.  This is enforced by construction: the loop never reads
+`resp.thinking` for the purpose of building the history.
+
+`FakeClient` records all messages lists passed to `chat()` in `received_messages` so
+tests can verify the invariant directly.
+
+**c. Does `num_predict=2048` count thinking tokens?**
+
+Yes.  Ollama 0.35.1 (`ollama` Python package 0.6.3) processes thinking tokens as regular
+output tokens before separating them into `msg.thinking`.  `num_predict=2048` limits
+TOTAL output per turn, including thinking tokens.
+
+**Truncation risk:** Qwen3-8B in hybrid mode can generate 200–2000 thinking tokens
+depending on task complexity.  On a date with a complex evidence structure, the model
+may exhaust most of the 2048-token budget on thinking, leaving fewer than ~100 tokens
+for the actual tool-call JSON.  A tool call response requires roughly 50–150 tokens;
+if thinking consumes >1900 tokens the call may be truncated mid-JSON and fail to parse.
+
+**Proposed fix (do not apply):** the smallest change is one line in `run_agent.py`:
+
+```python
+if args.think:
+    cfg = {**cfg, "think": True, "options": {**cfg["options"], "num_predict": -1}}
+```
+
+`num_predict: -1` means "unlimited" in Ollama.  The actual per-turn budget then equals
+`num_ctx - prompt_tokens`, which is effectively the entire context window (16384 − ~5000
+typical prompt = ~11000 tokens), well above any realistic thinking + tool-call sequence.
+The config hash changes (incorporates both `think=True` and the new `num_predict`),
+producing a distinct output file for the think=True run as required.
+
+**d. Per-turn thinking token counts in trace.** Every `llm_response` trace event now
+carries `thinking_tokens: int` (estimate: `len(resp.thinking) // 4`, matching the
+`context_limit` guard's `len(json.dumps(m)) // 3` convention).  With `think=False`,
+`thinking_tokens = 0` always.  With `think=True`, the field records the per-turn
+thinking budget consumed; a high value on a failing run would confirm truncation.
+
+**e. Tests (all pass with FakeClient, 4 new tests in section `(p)`):**
+- `test_p_thinking_not_in_history`: FakeClient returns thinking sentinel; verifies no
+  subsequent message list contains the sentinel.
+- `test_p_think_true_produces_distinct_config_hash`: `_config_hash({..., "think": True}, "v4")`
+  ≠ `_config_hash({..., "think": False}, "v4")`.
+- `test_p_think_false_behavior_unchanged`: think=False run completes `ok` with 0 rejected
+  and `thinking_tokens=0` in every trace event.
+- `test_p_thinking_tokens_in_trace`: FakeClient returns 400-char thinking string;
+  first `llm_response` event records `thinking_tokens=100`.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,
