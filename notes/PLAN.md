@@ -1998,6 +1998,228 @@ pattern rewrite) contributed to the v2 collapse.
 
 ---
 
+## 4.7 Dev results: prompt v3
+
+**41 runs (41 dev dates × 1 run), config hash `0d8f9f3b`, prompt version `v3`.**
+Full report: `evaluation/results/agent_dev_0d8f9f3b_report.md`.
+
+### a. Status counts
+
+All 41 runs: `ok`. Zero failures across v1, v2, v3.
+
+| incident | v1 ok | v2 ok | v3 ok |
+|---|---|---|---|
+| I1 | 5 | 5 | 5 |
+| I2 | 5 | 5 | 5 |
+| I3 | 5 | 5 | 5 |
+| I3b | 1 | 1 | 1 |
+| I4 | 5 | 5 | 5 |
+| I5 | 5 | 5 | 5 |
+| I6 | 5 | 5 | 5 |
+| I7 | 5 | 5 | 5 |
+| C1 | 5 | 5 | 5 |
+
+### b. Score A per incident (dates out of 5; I3b out of 1)
+
+| incident | target | v0 | v1 | v2 | v3 | engine dev |
+|---|---|---|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 2/5 | 5/5 | 2/5 | 5/5 | 5/5 |
+| I2 | conversion_rate/channel/Referral | 4/5 | 4/5 | 3/5 | 3/5 | 5/5 |
+| I3 | aov/channel/Direct | 0/5 | 4/5 | 0/5 | 0/5 | 5/5 |
+| I3b | aov/channel/Direct | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 |
+| I5 | conversion_rate/device/desktop | 4/5 | 4/5 | 3/5 | 4/5 | 4/5 |
+| I7 sessions | sessions/channel/Organic Search | 5/5 | 5/5 | 3/5 | 5/5 | 5/5 |
+| I7 CR | conversion_rate/channel/Referral | 5/5 | 5/5 | 2/5 | 4/5 | 5/5 |
+
+v3 recovers I1 and I7-sessions from v2 (both lost to mix overcorrection).  I3 stays 0/5;
+I7-CR loses one date relative to v1 (2017-05-23).
+
+### c. Score B per incident (pattern / top-1 / top-3)
+
+I7 both-targets-in-top-3: v0 5/5 · v1 5/5 · v2 0/5 · v3 4/5 · engine 3/5.
+
+| inc | v1 pat | v1 t1 | v1 t3 | v2 pat | v2 t1 | v2 t3 | v3 pat | v3 t1 | v3 t3 | eng pat | eng t1 | eng t3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| I1 | 5/5 | 5/5 | 5/5 | 1/5 | 1/5 | 1/5 | 5/5 | 5/5 | 5/5 | 5/5 | 3/5 | 4/5 |
+| I2 | 5/5 | 2/5 | 4/5 | 0/5 | 0/5 | 0/5 | 5/5 | 1/5 | 3/5 | 5/5 | 5/5 | 5/5 |
+| I3 | 5/5 | 2/5 | 3/5 | 0/5 | 0/5 | 0/5 | 5/5 | 0/5 | 0/5 | 5/5 | 3/5 | 5/5 |
+| I3b | 1/1 | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 |
+| I4 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I5 | 5/5 | 2/5 | 3/5 | 0/5 | 0/5 | 0/5 | 5/5 | 2/5 | 3/5 | 5/5 | 0/5 | 0/5 |
+| I6 | 0/5 | 0/5 | 0/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 5/5 | 5/5 | 5/5 | 5/5 | 4/5 | 5/5 |
+| C1 | 0/5 | — | — | 0/5 | — | — | 0/5 | — | — | 0/5 | — | — |
+
+v3 fully recovers v1's I1/I5/I7 pattern and top-1/top-3 scores.  I2 top-1 falls from 2/5 (v1)
+to 1/5; I3 top-1 stays 0/5.  I6 (correct=mix) returns to 0/5 — the pattern-rewrite regression
+that v2 fixed is re-introduced because v3 uses the v1 PATTERNS text.
+
+### d. C1: false positives and untested claims
+
+| arm | n runs | false positives | untested claims |
+|---|---|---|---|
+| v1 agent | 5 | 4 | 3 |
+| v2 agent | 5 | 1 | 14 |
+| v3 agent | 5 | 4 | 11 |
+| engine dev | 5 | 1 | 13 |
+
+v3 FP rate (4/5) matches v1; untested claims rise from v1's 3 to 11 (rendering change promotes
+mix/arithmetic rows in the citable block, which count as untested for C1).
+
+### e. Rejected claims
+
+| version | total rejected | invalid_strength | verdict_mismatch |
+|---|---|---|---|
+| v0 | 729 | 729 | 0 |
+| v1 | 246 | 200 | 46 |
+| v2 | 0 | 0 | 0 |
+| v3 | 0 | 0 | 0 |
+
+v3 matches v2: zero rejections.  The citable/context rendering split (v2 change 1, carried into
+v3) fully eliminates invalid-strength rejections.  Submitted strengths in v3: exact=84,
+strong=79, untested=59, plausible=9 — all valid.
+
+### f. Pattern distribution
+
+The v3 PATTERNS section is byte-identical to v1's; accordingly v3 submits `localized` on
+all 41 dates (same as v1), and I6 (correct=mix) scores 0/5 pattern (same regression as v1).
+
+| pattern | v0 (41 dates) | v1 (41 dates) | v2 (41 dates) | v3 (41 dates) |
+|---|---|---|---|---|
+| localized | 27 | 41 | 1 | 41 |
+| mix | 0 | 0 | 40 | 0 |
+| broad | 0 | 0 | 0 | 0 |
+| none | 7 | 0 | 0 | 0 |
+| no_answer (failed) | 7 | 0 | 0 | 0 |
+
+---
+
+### 4.7.1 Selection metric (PLAN 4.2 rule)
+
+| version | total top-1 | rejected claims | failed runs |
+|---|---|---|---|
+| v0 | 12 | 729 | 21 |
+| v1 | **16** | 246 | 0 |
+| v2 | 1 | 0 | 0 |
+| v3 | 13 | 0 | 0 |
+| engine | 15 | — | — |
+
+Per-incident top-1 (per-date counts):
+
+| incident | v0 | v1 | v2 | v3 | engine |
+|---|---|---|---|---|---|
+| I1 | 2/5 | 5/5 | 1/5 | 5/5 | 3/5 |
+| I2 | 3/5 | 2/5 | 0/5 | 1/5 | 5/5 |
+| I3 | 0/5 | 2/5 | 0/5 | 0/5 | 3/5 |
+| I3b | 0/1 | 0/1 | 0/1 | 0/1 | 0/1 |
+| I5 | 2/5 | 2/5 | 0/5 | 2/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 0/5 | 5/5 | 4/5 |
+| **total** | **12** | **16** | **1** | **13** | **15** |
+
+**Current leader: v1** (top-1=16, no tie-break needed).  v3 lands at 13 — third behind
+engine (15), ahead of v0 (12).  The rendering fix (zero rejected claims) is confirmed
+independent of the pattern rewrite: v3 has 0 rejections and 13 top-1, compared to v1's 246
+rejections and 16 top-1.  The rendering alone does not close the 3-point gap to v1.
+
+---
+
+### 4.7.2 I3 investigation (v1 4/5 → v3 0/5 on Score A)
+
+Per-date counts for I3 in v1 and v3:
+
+| date | v1 submitted | v1 accepted | v1 aov present? | v1 Direct cited? | v1 Direct rank (aov/ch) | v3 submitted | v3 accepted | v3 aov present? | v3 Direct cited? | v3 aov/ch content |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2017-03-10 | 16 | 0 | No | No | — | 6 | 6 | Yes | No | mix only |
+| 2016-11-21 | 8 | 3 | Yes | Yes | 1 | 6 | 6 | Yes | No | mix only |
+| 2017-02-27 | 14 | 5 | Yes | Yes | 1 | 4 | 4 | Yes | No | mix only |
+| 2017-03-30 | 14 | 6 | Yes | Yes | 1 | 6 | 6 | Yes | No | mix only |
+| 2017-05-01 | 12 | 8 | Yes | Yes | 1 | 4 | 4 | Yes | No | no aov/ch claim |
+
+**Conclusion:** explanation **(a)** with specificity.  Direct is citable in v3 — the v2
+rendering keeps `material_untested` rows in the citable block with `strength="untested"`.
+But v3 never submits Direct.  On 4/5 dates the model cites the aov/channel mix row
+(strength="exact", kind=mix, seg=None) and omits the Direct within-row entirely; on the
+fifth (2017-05-01) it cites aov/country/United States instead of any aov/channel row.
+The mix row is always citable (arithmetic verdict → "exact" in the v2 citable block) and
+appears with a higher-confidence strength label than Direct's "untested"; the model
+consistently selects it.  Pattern stays `localized` (v1 PATTERNS text preserved), so this
+is not a pattern-label error — the model's claim selection substitutes the mix row for the
+Direct within-row without changing its stated pattern belief.
+
+Contrast with v1: on 4/5 dates v1 submitted Direct as rank-1 aov/channel claim (though
+many other claims were rejected).  v1's higher total-submitted count (8–16 vs 4–6 in v3)
+reflects the invalid-strength rejections; the key difference is that v1's model selected
+Direct from the flat rendered list, while v3's model selects the mix row from the
+citable/context rendered list.
+
+**Same-mechanism check for I2 and I7-CR losses:**
+
+*I2/2016-11-14 (v1 True → v3 False):* v1 submitted 13 (2 accepted, Referral rank 1);
+v3 submitted 3 (3 accepted: desktop/CR strong, CR/country mix/exact, aov/country/US
+untested).  Referral/CR is absent in v3 — omitted, not outranked.  Same root: rendering
+shift changed which rows the model selects; Referral was not chosen in the 3-claim subset.
+
+*I7/2017-05-23 (v1 True → v3 False):* v1 cited Referral/CR plausible (2 accepted);
+v3 submitted 2 claims (sessions/Organic strong, CR/country/US plausible).  Referral absent
+— the model cited a country-dimension CR claim instead of a channel-dimension one.
+
+Both are the same mechanism as I3: the v2 rendering changes the model's claim-selection
+without changing pattern, and on specific dates the target segment is not selected.
+
+---
+
+### 4.7.3 Claims and metric distribution (v3 vs v1)
+
+| stat | v1 | v3 |
+|---|---|---|
+| mean submitted per run | 9.80 | 5.63 |
+| mean accepted per run | 3.80 | 5.63 |
+| total accepted (41 runs) | 156 | 231 |
+| sessions share | 64/156 (41%) | 59/231 (26%) |
+| conversion_rate share | 43/156 (28%) | 85/231 (37%) |
+| aov share | 49/156 (31%) | 87/231 (38%) |
+| within-kind claims | 149/156 (96%) | 147/231 (64%) |
+| mix-kind claims | 7/156 (4%) | 84/231 (36%) |
+
+v3 submits fewer claims (5.63 vs 9.80) because all submitted are accepted — the model no
+longer submits unclaimable rows.  Accepted claims per run is higher (5.63 vs 3.80) for the
+same reason.  Mix rows jump from 4% to 36% of accepted claims: the v2 rendering places
+arithmetic rows in the citable block with strength "exact", and the model cites them freely.
+Sessions share drops from 41% to 26%; ratio metrics (CR + aov) rise from 59% to 75%.
+
+---
+
+### 4.7.4 Date-level changes v1 → v3 (Score A or Score B)
+
+7 dates changed; all 7 are losses.
+
+| incident | date | Score A | Score B pat | Score B top-1 | Score B top-3 | reason |
+|---|---|---|---|---|---|---|
+| I2 | 2016-11-14 | -LOSS | same | same | -LOSS | claim_selection_shift (Referral absent) |
+| I2 | 2017-03-31 | same | same | -LOSS | same | ranking_shift (Referral rank 1→3) |
+| I3 | 2016-11-21 | -LOSS | same | -LOSS | -LOSS | mix_substitution (Direct absent) |
+| I3 | 2017-02-27 | -LOSS | same | same | -LOSS | mix_substitution (Direct absent) |
+| I3 | 2017-03-30 | -LOSS | same | -LOSS | -LOSS | mix_substitution (Direct absent) |
+| I3 | 2017-05-01 | -LOSS | same | same | same | mix_substitution (Direct absent) |
+| I7 | 2017-05-23 | -LOSS (CR) | same | same | same (both_in_top3 -LOSS) | claim_selection_shift (Referral absent) |
+
+**mix_substitution** (4 I3 dates): the model cites the aov/channel mix row (arithmetic/exact)
+instead of the Direct within-row.  Direct is citable but never submitted.
+
+**claim_selection_shift** (I2/2016-11-14, I7/2017-05-23): the model's overall claim selection
+changed such that the target segment (Referral/CR) was not chosen; a different row in the
+same or a different dimension was preferred.
+
+**ranking_shift** (I2/2017-03-31): Referral IS cited (Score A still passes) but demoted from
+rank 1 (v1) to rank 3 (v3), failing top-1.  Country/US and desktop/CR were ranked ahead of it.
+
+Net v1→v3 gain: zero.  Net loss: 7 dates (3 Score A + 3 Score B top-1 + 4 Score B top-3 + 1
+both_in_top3, counting each metric independently).  v3's rendering fix (0 rejections) does not
+compensate for the claim-selection regressions introduced when material_but_uncertain rows were
+hidden from the citable block, changing the model's selection landscape.
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,
