@@ -2444,18 +2444,22 @@ may exhaust most of the 2048-token budget on thinking, leaving fewer than ~100 t
 for the actual tool-call JSON.  A tool call response requires roughly 50–150 tokens;
 if thinking consumes >1900 tokens the call may be truncated mid-JSON and fail to parse.
 
-**Proposed fix (do not apply):** the smallest change is one line in `run_agent.py`:
+**Actual fix (commit `0ad783d`):** raise cap to `num_predict=4096` (double the baseline)
+and tighten context guard to `context_limit=11500`:
 
 ```python
 if args.think:
-    cfg = {**cfg, "think": True, "options": {**cfg["options"], "num_predict": -1}}
+    new_options = {**cfg["options"], "num_predict": 4096}
+    cfg = {**cfg, "think": True, "options": new_options}
 ```
 
-`num_predict: -1` means "unlimited" in Ollama.  The actual per-turn budget then equals
-`num_ctx - prompt_tokens`, which is effectively the entire context window (16384 − ~5000
-typical prompt = ~11000 tokens), well above any realistic thinking + tool-call sequence.
-The config hash changes (incorporates both `think=True` and the new `num_predict`),
-producing a distinct output file for the think=True run as required.
+`num_predict=-1` (unlimited) was the original proposal but was rejected: temperature=0
+removes sampling variation, so an unguarded loop can repeat indefinitely if the stop
+condition is missed.  `num_predict=4096` doubles the baseline cap (2048) while keeping
+the repetition-loop guard.  Context guard tightened to `context_limit=11500` (vs 13000
+default) to prevent mid-turn overflow as per-turn thinking tokens expand the prompt.
+Both changes alter the config hash; think=True produces hash `cda463a5` vs think=False
+`f854dee9`.
 
 **d. Per-turn thinking token counts in trace.** Every `llm_response` trace event now
 carries `thinking_tokens: int` (estimate: `len(resp.thinking) // 4`, matching the
@@ -2472,6 +2476,76 @@ thinking budget consumed; a high value on a failing run would confirm truncation
   and `thinking_tokens=0` in every trace event.
 - `test_p_thinking_tokens_in_trace`: FakeClient returns 400-char thinking string;
   first `llm_response` event records `thinking_tokens=100`.
+
+---
+
+### 4.9.4 Version switch implementation and reproduction check
+
+**Version switch (commit `0ad783d`).**  `--version v1|v4` flag added to
+`evaluation/run_agent.py`.  All version-specific components are packaged into a
+`VersionCfg` dataclass (`agent/versions.py`) and swapped atomically at run startup:
+system prompt (`agent/prompt_v1.py`), tool schemas (per-version descriptions and
+strength enum), render functions (`agent/render_v1.py`), and strength-to-verdict
+checker mapping.  Key difference: v1 uses `"arithmetic" → "exact"` and returns flat
+lists from `render_test_dimension`; v4 uses `"arithmetic" → "mix"` and returns
+`{"citable": [...], "context": [...]}` dicts.  7 new `(q)` tests cover the switch
+end-to-end (all pass).
+
+**Reproduction check (v1 think=False, config_hash=`f854dee9`, 3 dates).**
+
+| date | status | pattern | accepted claims |
+|---|---|---|---|
+| 2017-01-26 | ok | localized ✓ | E001 strong ✓ |
+| 2017-03-16 | ok | localized ✓ | E001 strong ✓ |
+| 2017-05-04 | ok | localized ✓ | E001 strong, E030 plausible ✓ |
+
+All 3 dates: pattern and accepted claims identical to reference.  One date
+(2017-05-04) submitted 3 claims vs reference 4; the extra rejected claim varied
+across server reloads.
+
+**Finding (non-determinism across model reloads).**  Qwen3-8B at temperature=0
+seed=20261001 is deterministic *within* a server session (32/32 dates matched in
+the session that produced the reference file) but not byte-identical *across* model
+reloads.  Minor differences appear in rejected-claim counts (0–1 extra invalid claim
+submitted or omitted per date); accepted claims and patterns are stable.
+
+**Criterion redefined:** reproduction is accepted when score-relevant fields (pattern
+and ordered accepted claims) are identical.  The v1 top-1=16 vs v4 top-1=15 margin
+(1 date) is within this variation band.  The held-out protocol runs 3 independent
+runs per date to measure it directly.
+
+---
+
+### 4.9.5 Think pilot (v1 think=True, 3 runs, config_hash=`cda463a5`)
+
+**Per-run measurements:**
+
+| date | status | elapsed_s | thinking_tokens | turns done_reason=length | max_prompt_eval | pattern | pattern_match |
+|---|---|---|---|---|---|---|---|
+| 2017-01-26 | ok | 264.9 | 3728 | 0 | 3461 | localized | ✓ |
+| 2017-03-16 | ok | 321.3 | 4047 | 0 | 3351 | none | ✗ (ref=localized) |
+| 2017-05-04 | ok | 651.0 | 5576 | 1 | 2083 | none | ✗ (ref=localized) |
+
+thinking_tokens = sum across all `llm_response` trace events (unit: `len(thinking) // 4`).
+
+**Time estimate:** mean 412.4 s/run → 41-run think=True ≈ **282 minutes (~4.7 hours)**,
+vs ~54 minutes for think=False (mean 79 s).
+
+**Key findings:**
+
+1. **Accuracy regression:** think=True produces wrong pattern ("none") on 2/3 pilot
+   dates, where think=False was correct.  Thinking mode appears to introduce additional
+   hedging: the model concludes the evidence is insufficient and submits `none` instead
+   of picking the dominant segment.  Claims also shift (2017-01-26: extra untested claim
+   added; 2017-03-16 and 2017-05-04: empty claims list).
+
+2. **Truncation persists at num_predict=4096:** 2017-05-04 had one turn hit
+   `done_reason="length"`, confirming that complex dates can still exhaust the 4096-token
+   budget.  5576 thinking token units ÷ 4 turns ≈ 1394 units/turn average; at least one
+   turn generated enough thinking to crowd out response tokens.
+
+3. **Speed:** 3–8× slower than think=False.  The 41-run full think=True run would require
+   ~4.7 hours vs ~54 minutes for think=False.
 
 ---
 

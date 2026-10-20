@@ -4,3 +4,4 @@ __pycache__/
 data/raw
 data/*.duckdb
 evaluation/results/*_debug.jsonl
+.claude/settings.local.json
