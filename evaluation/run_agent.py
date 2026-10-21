@@ -41,6 +41,10 @@ from agent.tools import ToolSession
 INCIDENTS = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 
+_HELDOUT_DATES_PATH = os.path.join(ROOT, "evaluation", "heldout", "heldout_dates.json")
+_HELDOUT_SHA256 = "82012176af32e9677f0a08af33243166b972c14adf15cfb11dc539f1e3ccfe54"
+_EXPECTED_HELDOUT_TOTAL = 73
+
 
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
@@ -193,6 +197,68 @@ def _answer_to_dict(answer: Answer | None) -> dict | None:
     }
 
 
+def _build_dev_work() -> list[tuple[str, str]]:
+    """(iid, date) pairs from dev ground-truth files — 41 pairs total."""
+    work = []
+    for iid in INCIDENTS:
+        gt = load_ground_truth(iid)
+        for date in gt["dates"]:
+            work.append((iid, date))
+    return work
+
+
+def _load_heldout_work() -> list[tuple[str, str]]:
+    """(iid, date) pairs from heldout_dates.json — 73 pairs total.
+
+    Verifies SHA-256 of the file before parsing; fails loudly on mismatch,
+    wrong date count, or any overlap with dev dates.  Dates are never printed.
+    """
+    with open(_HELDOUT_DATES_PATH, "rb") as f:
+        raw = f.read()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != _HELDOUT_SHA256:
+        print(
+            f"Error: heldout_dates.json SHA-256 mismatch.\n"
+            f"  expected: {_HELDOUT_SHA256}\n"
+            f"  got:      {digest}\n"
+            "The held-out date file has been altered. Aborting.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    payload = json.loads(raw)
+    incidents_dict = payload["incidents"]
+
+    work = []
+    for iid in INCIDENTS:
+        for date in incidents_dict[iid]:
+            work.append((iid, date))
+
+    if len(work) != _EXPECTED_HELDOUT_TOTAL:
+        print(
+            f"Error: heldout_dates.json contains {len(work)} dates, "
+            f"expected {_EXPECTED_HELDOUT_TOTAL}. Aborting.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    dev_dates: set[str] = set()
+    for iid in INCIDENTS:
+        gt = load_ground_truth(iid)
+        dev_dates.update(str(d) for d in gt["dates"])
+    held_dates = {date for _, date in work}
+    overlap = held_dates & dev_dates
+    if overlap:
+        print(
+            f"Error: {len(overlap)} held-out date(s) collide with dev dates. "
+            "Aborting (dates not printed).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return work
+
+
 # ------------------------------------------------------------------ #
 # Main                                                                 #
 # ------------------------------------------------------------------ #
@@ -279,11 +345,10 @@ def main(argv: list[str] | None = None) -> None:
     git_head = _git_head()
 
     # Build work list
-    work: list[tuple[str, str]] = []
-    for iid in INCIDENTS:
-        gt = load_ground_truth(iid)
-        for date in gt["dates"]:
-            work.append((iid, date))
+    if args.split == "heldout":
+        work = _load_heldout_work()
+    else:
+        work = _build_dev_work()
     if args.limit is not None:
         work = work[: args.limit]
 
@@ -312,7 +377,6 @@ def main(argv: list[str] | None = None) -> None:
     consecutive_failed_error = 0
     with open(out_path, "a", buffering=1) as fh:
         for iid, date in work:
-            gt = load_ground_truth(iid)
             for run in range(args.runs):
                 key = f"{iid}_{date}_{run}"
                 if key in done_keys:

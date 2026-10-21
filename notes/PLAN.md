@@ -2671,6 +2671,42 @@ v1 think=False wins at the first rule step (highest top-1=16); no tie-break appl
   `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`),
   same seed and temperature as dev runs (temperature=0, seed=20261001)
 
+### 4.10.1 Held-out runner bug — caught before any held-out date ran (2026-10-20)
+
+**Bug:** `--split heldout` ran 41 dev dates instead of 73 held-out dates.  The
+work-list builder at `evaluation/run_agent.py:284` unconditionally called
+`load_ground_truth(iid)` (which returns dev dates from `evaluation/ground_truth/`)
+regardless of `args.split`.  The held-out run started, printed
+`work: 123 runs (41 dates × 3)`, and was stopped with Ctrl+C.  At that point zero
+held-out dates had been processed: the 27 lines written to
+`agent_heldout_f854dee9.jsonl` were all dev-date records.  The work-count line
+`work: 123 runs (41 dates × 3)` is what revealed the bug — held-out should show
+`work: 219 runs (73 dates × 3)`.
+
+**File renamed:** `agent_heldout_f854dee9.jsonl` →
+`agent_heldout_f854dee9_INVALID_dev_dates.jsonl` (kept, not deleted).
+
+**Fix (commit below):**
+
+- `_build_dev_work()` extracted: iterates `load_ground_truth(iid)["dates"]` for each
+  incident — same as before, now named.
+- `_load_heldout_work()` added: opens `evaluation/heldout/heldout_dates.json` in
+  binary mode, verifies SHA-256 = `82012176af32e9677f0a08af33243166b972c14adf15cfb11dc539f1e3ccfe54`
+  (fails loudly on mismatch), parses `incidents` dict, builds 73 (iid, date) pairs,
+  asserts total==73, asserts no overlap with dev dates (error prints count only,
+  never dates).
+- `main()` work-list section: `if args.split == "heldout": work = _load_heldout_work()`
+  else `work = _build_dev_work()`.
+- Dead `gt = load_ground_truth(iid)` inside the per-date run loop removed.
+- Constants: `_HELDOUT_DATES_PATH`, `_HELDOUT_SHA256 = "82012176..."`,
+  `_EXPECTED_HELDOUT_TOTAL = 73`.
+- 5 new `(s)` tests: heldout 73-pair count + per-incident counts; 219 total work items;
+  no dev-date overlap (assertion counts only, no dates printed); SHA mismatch raises
+  SystemExit(1); dev work list still 41 pairs / 123 runs.  298/298 tests pass.
+
+**Agent code unchanged:**  `git diff agent-frozen -- agent/` is empty.  Frozen
+config_hash recomputed after fix: `f854dee9` (confirmed).
+
 ---
 
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION

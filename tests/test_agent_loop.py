@@ -1971,3 +1971,68 @@ def test_r_dev_mode_unaffected_by_frozen_guard(monkeypatch) -> None:
     monkeypatch.setattr(run_agent_mod, "_verify_pinned_digest", lambda: (_ for _ in ()).throw(RuntimeError("no-ollama")))
     with pytest.raises(RuntimeError, match="no-ollama"):
         run_agent_mod.main(["--split", "dev", "--version", "v4"])
+
+
+# ------------------------------------------------------------------ #
+# (s) Held-out work list integrity                                    #
+# ------------------------------------------------------------------ #
+
+def test_s_heldout_work_list_counts() -> None:
+    """Held-out work list has 73 (iid, date) pairs: I3b=1, all others=9."""
+    import evaluation.run_agent as run_agent_mod
+    from collections import Counter
+
+    work = run_agent_mod._load_heldout_work()
+    assert len(work) == 73, f"expected 73 pairs, got {len(work)}"
+    counts = Counter(iid for iid, _ in work)
+    assert counts["I3b"] == 1
+    for iid in ["I1", "I2", "I3", "I4", "I5", "I6", "I7", "C1"]:
+        assert counts[iid] == 9, f"{iid}: expected 9 dates, got {counts[iid]}"
+
+
+def test_s_heldout_total_runs_219() -> None:
+    """73 dates × 3 runs = 219 total work items (default --runs for heldout)."""
+    import evaluation.run_agent as run_agent_mod
+
+    work = run_agent_mod._load_heldout_work()
+    assert len(work) * 3 == 219
+
+
+def test_s_heldout_no_dev_date_overlap() -> None:
+    """No held-out date appears in any dev ground-truth date list."""
+    import evaluation.run_agent as run_agent_mod
+    from evaluation.arm_neutral import load_ground_truth
+
+    work = run_agent_mod._load_heldout_work()
+    held_dates = {date for _, date in work}
+
+    dev_dates: set[str] = set()
+    for iid in run_agent_mod.INCIDENTS:
+        gt = load_ground_truth(iid)
+        dev_dates.update(str(d) for d in gt["dates"])
+
+    overlap = held_dates & dev_dates
+    # Do not print dates — just report count
+    assert len(overlap) == 0, f"{len(overlap)} held-out date(s) overlap with dev dates"
+
+
+def test_s_heldout_sha_mismatch_raises(tmp_path, monkeypatch) -> None:
+    """SHA-256 mismatch on heldout_dates.json raises SystemExit(1)."""
+    import evaluation.run_agent as run_agent_mod
+
+    tampered = tmp_path / "heldout_dates.json"
+    tampered.write_text('{"incidents": {}}')
+    monkeypatch.setattr(run_agent_mod, "_HELDOUT_DATES_PATH", str(tampered))
+    with pytest.raises(SystemExit) as exc:
+        run_agent_mod._load_heldout_work()
+    assert exc.value.code == 1
+
+
+def test_s_dev_work_list_has_41_pairs() -> None:
+    """Dev work list has 41 (iid, date) pairs — 41 dates × 3 runs = 123 total."""
+    import evaluation.run_agent as run_agent_mod
+
+    work = run_agent_mod._build_dev_work()
+    assert len(work) == 41, f"expected 41 dev pairs, got {len(work)}"
+    # With default --runs 3: 41 * 3 = 123
+    assert len(work) * 3 == 123

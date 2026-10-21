@@ -25,6 +25,11 @@ See PLAN.md for architecture, design decisions, and evaluation protocol.
 
 **M6 final commit:** see `git log --oneline -1` (tagged `agent-frozen`)
 
+**Post-freeze bug fix:** held-out runner was building work list from dev dates (caught
+on the `work: 123 runs (41 dates × 3)` line before any held-out date ran); fixed to
+load `evaluation/heldout/heldout_dates.json` with SHA-256 verification.
+Agent code is byte-identical to `agent-frozen` (`git diff agent-frozen -- agent/` empty).
+
 ---
 
 ## Frozen boundaries
