@@ -2671,7 +2671,7 @@ v1 think=False wins at the first rule step (highest top-1=16); no tie-break appl
   `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`),
   same seed and temperature as dev runs (temperature=0, seed=20261001)
 
-### 4.10.1 Held-out runner bug — caught before any held-out date ran (2026-10-20)
+### 4.10.1 Held-out runner bug 1 — dev-date work list (caught before any held-out date ran, 2026-10-20)
 
 **Bug:** `--split heldout` ran 41 dev dates instead of 73 held-out dates.  The
 work-list builder at `evaluation/run_agent.py:284` unconditionally called
@@ -2706,6 +2706,44 @@ held-out dates had been processed: the 27 lines written to
 
 **Agent code unchanged:**  `git diff agent-frozen -- agent/` is empty.  Frozen
 config_hash recomputed after fix: `f854dee9` (confirmed).
+
+### 4.10.2 Held-out runner bug 2 — injector dev-date guard (caught by circuit breaker, 2026-10-20)
+
+**Bug:** `evaluation/run_agent.py` used `build_incident_con(iid, date)` in its run
+loop for both splits.  `build_incident_con` (injector.py:187-189) raises
+`ValueError` for any date not in the incident's `evaluation/ground_truth/<id>.json`
+list — a safety rail that protects against accidental held-out access.  The circuit
+breaker triggered after 2 consecutive `failed_error` runs; zero model turns
+occurred.
+
+**File renamed:** `agent_heldout_f854dee9.jsonl` →
+`agent_heldout_f854dee9_INVALID_injector_guard.jsonl` (kept, not deleted).
+
+**Dates not exposed:** one held-out date appeared in a `ValueError` message inside
+a `failed_error` traceback written to the output file.  The file is kept as
+evidence but never analyzed; the agent-frozen tag is unaffected.
+
+**Fix (commit below):**
+
+- `evaluation/injector.py`: `_build_con_impl(incident_id, date)` extracted —
+  shared logic for both callers (opens real DB read-only, applies mechanism,
+  returns in-memory connection).  `build_incident_con` now validates date then
+  calls `_build_con_impl`.  `build_incident_con_any_date(incident_id, date)`
+  added — same path, no date-registration check, documented for held-out use only.
+- `evaluation/run_heldout_engine.py`: `_build_con_any_date` now delegates to
+  `build_incident_con_any_date` from injector (one shared implementation).
+- `evaluation/run_agent.py`: run loop branches on `is_heldout`; held-out path
+  calls `build_incident_con_any_date`, dev path keeps `build_incident_con`.
+  Progress print suppressed date in heldout mode (prints `{iid} run={run}` only).
+
+**Preflight test** (`test_t_heldout_preflight_connections_and_investigate`): for
+all 73 held-out (iid, date) pairs — builds connection via `build_incident_con_any_date`,
+constructs ToolSession, runs `investigate()` via both the agent path and the engine
+path (`_build_con_any_date`), asserts ledger entries identical.  No dates printed;
+errors report pair index and incident only.  299/299 tests pass.
+
+**Agent code unchanged:** `git diff agent-frozen -- agent/` is empty.  Frozen
+config_hash: `f854dee9` (confirmed).
 
 ---
 

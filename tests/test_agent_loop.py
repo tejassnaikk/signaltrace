@@ -2036,3 +2036,55 @@ def test_s_dev_work_list_has_41_pairs() -> None:
     assert len(work) == 41, f"expected 41 dev pairs, got {len(work)}"
     # With default --runs 3: 41 * 3 = 123
     assert len(work) * 3 == 123
+
+
+# ------------------------------------------------------------------ #
+# (t) Held-out preflight: all 73 connections + investigate() parity   #
+# ------------------------------------------------------------------ #
+
+def test_t_heldout_preflight_connections_and_investigate() -> None:
+    """For all 73 held-out (iid, date) pairs:
+    - build_incident_con_any_date succeeds and ToolSession constructs OK
+    - investigate() via build_incident_con_any_date (agent path) gives
+      identical ledger results to _build_con_any_date (engine path)
+    No held-out dates are printed in any assertion message.
+    """
+    import evaluation.run_agent as run_agent_mod
+    from evaluation.injector import build_incident_con_any_date
+    from evaluation.run_heldout_engine import _build_con_any_date
+    from agent.tools import ToolSession
+    from evaluation.arm_neutral import FORCED_METRICS
+    from investigation.orchestrator import investigate
+
+    work = run_agent_mod._load_heldout_work()
+    assert len(work) == 73
+
+    for pair_idx, (iid, date) in enumerate(work):
+        # Agent path connection + ToolSession
+        con_agent = build_incident_con_any_date(iid, date)
+        session = ToolSession(date, con_agent)  # must not raise
+
+        # Engine path connection (delegates to same function after fix)
+        con_engine = _build_con_any_date(iid, date)
+
+        # Both paths must produce identical investigate() results
+        r_agent = investigate(date, con=con_agent,
+                              force=list(FORCED_METRICS), verbose=False)
+        r_engine = investigate(date, con=con_engine,
+                               force=list(FORCED_METRICS), verbose=False)
+
+        agent_entries = sorted(
+            (e.evidence_id, e.verdict) for e in r_agent["ledger"].entries
+        )
+        engine_entries = sorted(
+            (e.evidence_id, e.verdict) for e in r_engine["ledger"].entries
+        )
+        # Report pair index only — never the date
+        assert agent_entries == engine_entries, (
+            f"Ledger mismatch at pair {pair_idx} incident={iid} "
+            f"(date not shown): agent={len(agent_entries)} entries, "
+            f"engine={len(engine_entries)} entries"
+        )
+
+        con_agent.close()
+        con_engine.close()

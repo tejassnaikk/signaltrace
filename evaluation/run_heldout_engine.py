@@ -65,37 +65,11 @@ def _verify_heldout_sha256() -> str:
 
 
 def _build_con_any_date(incident_id: str, date) -> duckdb.DuckDBPyConnection:
-    """evaluation.injector.build_incident_con's exact logic, minus its
-    date-registration check (see module docstring)."""
-    from evaluation.injector import DB, _apply_mechanism, load_ground_truth
-
-    gt = load_ground_truth(incident_id)
-    date = pd.Timestamp(date)
-    real = duckdb.connect(DB, read_only=True)
-    fact = real.execute("SELECT * FROM fact_sessions").df()
-    fact["date"] = pd.to_datetime(fact["date"])
-    conc = real.execute("SELECT * FROM order_concentration").df()
-    conc["date"] = pd.to_datetime(conc["date"])
-    real.close()
-
-    fact = _apply_mechanism(fact, date, gt["mechanism"])
-    daily = fact.groupby("date", as_index=False).agg(
-        sessions=("sessions", "sum"), transactions=("transactions", "sum"),
-        revenue=("revenue", "sum"))
-    daily["conversion_rate"] = daily["transactions"] / daily["sessions"].where(daily["sessions"] > 0)
-    daily["aov"] = daily["revenue"] / daily["transactions"].where(daily["transactions"] > 0)
-
-    con = duckdb.connect(":memory:")
-    con.register("_fact", fact)
-    con.execute("CREATE TABLE fact_sessions AS SELECT * FROM _fact")
-    con.register("_daily", daily)
-    con.execute("CREATE TABLE metrics_daily AS SELECT * FROM _daily")
-    con.register("_conc", conc)
-    con.execute("CREATE TABLE order_concentration AS SELECT * FROM _conc")
-    con.unregister("_fact")
-    con.unregister("_daily")
-    con.unregister("_conc")
-    return con
+    """Delegates to evaluation.injector.build_incident_con_any_date — the
+    single shared implementation for both held-out callers (this script and
+    evaluation/run_agent.py --split heldout)."""
+    from evaluation.injector import build_incident_con_any_date
+    return build_incident_con_any_date(incident_id, date)
 
 
 @contextlib.contextmanager

@@ -176,18 +176,10 @@ def _apply_mechanism(fact: pd.DataFrame, date: pd.Timestamp, mech: dict) -> pd.D
         f"injector mechanism {mech['kind']!r} not yet built")
 
 
-def build_incident_con(incident_id: str, date: str | pd.Timestamp
-                       ) -> duckdb.DuckDBPyConnection:
-    """Returns a fresh in-memory connection whose fact_sessions/metrics_daily/
-    order_concentration reflect `incident_id`'s ground-truth mechanism applied
-    to `date`. Pass this as investigate(..., con=this) - never mutates
-    data/signaltrace.duckdb."""
+def _build_con_impl(incident_id: str, date: pd.Timestamp) -> duckdb.DuckDBPyConnection:
+    """Shared implementation for build_incident_con and build_incident_con_any_date.
+    Caller is responsible for date validation."""
     gt = load_ground_truth(incident_id)
-    date = pd.Timestamp(date)
-    if date not in pd.to_datetime(gt["dates"]).tolist():
-        raise ValueError(f"{date.date()} is not one of {incident_id}'s "
-                         f"pre-registered dates: {gt['dates']}")
-
     real = duckdb.connect(DB, read_only=True)
     fact = real.execute("SELECT * FROM fact_sessions").df()
     fact["date"] = pd.to_datetime(fact["date"])
@@ -196,10 +188,6 @@ def build_incident_con(incident_id: str, date: str | pd.Timestamp
     real.close()
 
     fact = _apply_mechanism(fact, date, gt["mechanism"])
-
-    # Recompute metrics_daily from the modified fact_sessions with the exact
-    # same derivation as ingest/load_ga.py, so the Revenue = Sessions x CR x
-    # AOV identity still holds on the synthetic day.
     daily = fact.groupby("date", as_index=False).agg(
         sessions=("sessions", "sum"),
         transactions=("transactions", "sum"),
@@ -218,6 +206,33 @@ def build_incident_con(incident_id: str, date: str | pd.Timestamp
     con.unregister("_daily")
     con.unregister("_conc")
     return con
+
+
+def build_incident_con(incident_id: str, date: str | pd.Timestamp
+                       ) -> duckdb.DuckDBPyConnection:
+    """Returns a fresh in-memory connection whose fact_sessions/metrics_daily/
+    order_concentration reflect `incident_id`'s ground-truth mechanism applied
+    to `date`. Pass this as investigate(..., con=this) - never mutates
+    data/signaltrace.duckdb."""
+    gt = load_ground_truth(incident_id)
+    date = pd.Timestamp(date)
+    if date not in pd.to_datetime(gt["dates"]).tolist():
+        raise ValueError(f"{date.date()} is not one of {incident_id}'s "
+                         f"pre-registered dates: {gt['dates']}")
+    return _build_con_impl(incident_id, date)
+
+
+def build_incident_con_any_date(incident_id: str, date: str | pd.Timestamp
+                                ) -> duckdb.DuckDBPyConnection:
+    """Same as build_incident_con but without the dev-date registration check.
+
+    Use ONLY for the held-out split (evaluation/run_agent.py --split heldout
+    and evaluation/run_heldout_engine.py).  The dev-date check in
+    build_incident_con is a safety rail against accidental held-out leakage;
+    this function exists solely so both held-out callers use identical
+    injection logic.  Do not call this from dev-mode code paths.
+    """
+    return _build_con_impl(incident_id, pd.Timestamp(date))
 
 
 if __name__ == "__main__":

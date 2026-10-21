@@ -35,7 +35,7 @@ from evaluation.arm_neutral import (
     Answer, Claim, c1_claim_counts, check_answer, engine_answer,
     load_ground_truth, score_a, score_b,
 )
-from evaluation.injector import build_incident_con
+from evaluation.injector import build_incident_con, build_incident_con_any_date
 from agent.tools import ToolSession
 
 INCIDENTS = ["I1", "I2", "I3", "I3b", "I4", "I5", "I6", "I7", "C1"]
@@ -374,6 +374,7 @@ def main(argv: list[str] | None = None) -> None:
         for iid in INCIDENTS
     }
 
+    is_heldout = (args.split == "heldout")
     consecutive_failed_error = 0
     with open(out_path, "a", buffering=1) as fh:
         for iid, date in work:
@@ -382,11 +383,16 @@ def main(argv: list[str] | None = None) -> None:
                 if key in done_keys:
                     continue
 
-                print(f"  {iid} {date} run={run} ... ", end="", flush=True)
+                # Never print held-out dates — use incident + run counter only
+                if is_heldout:
+                    print(f"  {iid} run={run} ... ", end="", flush=True)
+                else:
+                    print(f"  {iid} {date} run={run} ... ", end="", flush=True)
 
                 t_start = time.time()
                 try:
-                    con = build_incident_con(iid, date)
+                    con = (build_incident_con_any_date(iid, date)
+                           if is_heldout else build_incident_con(iid, date))
                     session = ToolSession(
                         date, con,
                         render_fn=version_cfg.render_test_dimension,
