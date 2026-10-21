@@ -1933,3 +1933,41 @@ def test_q_version_cfg_v1_checker_accepts_exact_strength() -> None:
         f"Arithmetic claim with strength='exact' must be accepted by v1 checker; "
         f"rejected: {result['rejected']}"
     )
+
+
+# ------------------------------------------------------------------ #
+# (r) Frozen-agent enforcement in run_agent.py                        #
+# ------------------------------------------------------------------ #
+
+def test_r_heldout_refuses_wrong_version(monkeypatch) -> None:
+    """--split heldout with --version v4 exits with code 1 (frozen is v1)."""
+    import evaluation.run_agent as run_agent_mod
+    monkeypatch.setattr(run_agent_mod, "_agent_frozen_tag_exists", lambda: True)
+    with pytest.raises(SystemExit) as exc:
+        run_agent_mod.main([
+            "--split", "heldout", "--i-confirm-heldout", "--version", "v4",
+        ])
+    assert exc.value.code == 1
+
+
+def test_r_heldout_refuses_think(monkeypatch) -> None:
+    """--split heldout with --think exits with code 1 (frozen is think=False)."""
+    import evaluation.run_agent as run_agent_mod
+    monkeypatch.setattr(run_agent_mod, "_agent_frozen_tag_exists", lambda: True)
+    with pytest.raises(SystemExit) as exc:
+        run_agent_mod.main([
+            "--split", "heldout", "--i-confirm-heldout", "--version", "v1", "--think",
+        ])
+    assert exc.value.code == 1
+
+
+def test_r_dev_mode_unaffected_by_frozen_guard(monkeypatch) -> None:
+    """--split dev --version v4 is never rejected by the frozen guard (which is heldout-only).
+
+    Monkeypatching _verify_pinned_digest to raise RuntimeError confirms the process
+    reached the model-verification step rather than exiting at the frozen check.
+    """
+    import evaluation.run_agent as run_agent_mod
+    monkeypatch.setattr(run_agent_mod, "_verify_pinned_digest", lambda: (_ for _ in ()).throw(RuntimeError("no-ollama")))
+    with pytest.raises(RuntimeError, match="no-ollama"):
+        run_agent_mod.main(["--split", "dev", "--version", "v4"])

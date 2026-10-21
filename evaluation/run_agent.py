@@ -30,7 +30,7 @@ sys.path.insert(0, ROOT)
 from agent.config import config as _agent_config, _verify_pinned_digest
 from agent.llm import OllamaClient
 from agent.loop import run_agent
-from agent.versions import get_version
+from agent.versions import get_version, FROZEN_AGENT, FROZEN_THINK
 from evaluation.arm_neutral import (
     Answer, Claim, c1_claim_counts, check_answer, engine_answer,
     load_ground_truth, score_a, score_b,
@@ -231,6 +231,22 @@ def main(argv: list[str] | None = None) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        # Enforce frozen configuration — no overrides permitted on held-out
+        if args.version != FROZEN_AGENT.name:
+            print(
+                f"Error: --split heldout requires --version {FROZEN_AGENT.name} "
+                f"(frozen agent). Passed --version {args.version!r}. "
+                "Do not override the frozen configuration.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args.think != FROZEN_THINK:
+            print(
+                "Error: --split heldout requires think=False (frozen agent). "
+                "--think is not permitted on held-out runs.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Verify pinned digest at run start (fails loudly if model changed or Ollama down)
     _verify_pinned_digest()
@@ -245,6 +261,17 @@ def main(argv: list[str] | None = None) -> None:
         cfg = {**cfg, "think": True, "options": new_options}
     client = OllamaClient(cfg)
     chash = _config_hash(cfg, version_cfg.prompt_version)
+
+    if args.split == "heldout":
+        _FROZEN_HASH = "f854dee9"
+        if chash != _FROZEN_HASH:
+            print(
+                f"Error: frozen config_hash should be {_FROZEN_HASH} but computed {chash}. "
+                "The frozen configuration has drifted — do not run held-out.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Frozen config_hash: {chash}")
 
     out_path = _build_out_path(RESULTS_DIR, args.split, chash, args.limit)
     os.makedirs(RESULTS_DIR, exist_ok=True)

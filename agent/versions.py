@@ -208,6 +208,11 @@ V4_CFG = VersionCfg(
 
 _REGISTRY: dict[str, VersionCfg] = {"v1": V1_CFG, "v4": V4_CFG}
 
+# Frozen agent configuration — selected by PLAN 4.2 rule (highest dev top-1).
+# run_agent.py enforces these for the held-out split; do not change after agent-frozen tag.
+FROZEN_AGENT: VersionCfg = V1_CFG
+FROZEN_THINK: bool = False
+
 
 def get_version(name: str) -> VersionCfg:
     if name not in _REGISTRY:

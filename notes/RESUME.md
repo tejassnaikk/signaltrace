@@ -1,4 +1,4 @@
-# SignalTrace — resume point (2026-10-07)
+# SignalTrace — resume point (2026-10-20)
 
 ## What this project is
 
@@ -21,7 +21,9 @@ See PLAN.md for architecture, design decisions, and evaluation protocol.
 | M3 | `43f231d` | Benchmark incidents (34/36 pass), holiday screening |
 | M4 | `4b7a950` | Streamlit dashboard |
 | M5 | `5d0e956` | Engine evaluated on held-out set; tagged `engine-frozen-m5` and `heldout-frozen` |
-| M6 | `eabbd2f` | Agent tool layer + loop + resumable runner; fake-model tested (142/142 tests) |
+| M6 | complete | Agent frozen at `agent-frozen` tag (commit below); held-out run is next |
+
+**M6 final commit:** see `git log --oneline -1` (tagged `agent-frozen`)
 
 ---
 
@@ -34,64 +36,42 @@ See PLAN.md for architecture, design decisions, and evaluation protocol.
 - `evaluation/heldout/`
 - `evaluation/results/heldout_engine.json`
 
-Violation of either boundary invalidates the benchmark.
+**Agent frozen at `agent-frozen`.**  Frozen configuration:
+- Version: v1 (`agent/versions.py` `FROZEN_AGENT = V1_CFG`)
+- think: False (`FROZEN_THINK = False`)
+- Config hash: `f854dee9`
+- Do not change agent code or configuration between the `agent-frozen` tag and
+  the held-out run
+
+Violation of any boundary invalidates the benchmark.
 
 ---
 
-## What is forbidden during agent development
+## Next step: held-out run
+
+M6 is complete.  The agent is frozen.  Run held-out exactly once:
+
+```
+python -m evaluation.run_agent --split heldout --i-confirm-heldout
+```
+
+Requirements before running:
+1. External SSD connected (`ollama-start`)
+2. Model loaded: qwen3:8b digest
+   `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`
+3. `agent-frozen` tag on HEAD (already created)
+4. Script enforces version=v1 and think=False automatically; aborts if
+   config_hash ≠ f854dee9
+
+Expected: 73 dates × 3 runs = 219 runs.  No re-runs after this.
+
+---
+
+## What is forbidden
 
 - Reading or reasoning about held-out ground-truth files (above)
 - Selecting or tuning anything based on held-out outcomes
-- Running `--split heldout` before tagging `agent-frozen`
 - Changing detection/, investigation/, or metrics/ for any reason
-- Evaluating on a subset of dev dates (--limit runs are for debugging only,
-  never count toward prompt selection — see PLAN.md Section 4.2)
-
----
-
-## Starting Ollama (external SSD required)
-
-The local model lives on the external SSD.  Use the shell functions defined in
-`~/.zshrc` (or wherever they were added):
-
-```
-ollama-start    # mounts SSD if needed, starts the Ollama server
-ollama-stop     # stops the server
-```
-
-The server must be running before any real-model step.  Confirm with:
-
-```
-ollama list
-```
-
-When the SSD is disconnected, the server cannot start.  All agent code is
-safe to import and test with FakeClient — nothing connects at import time.
-
----
-
-## Next pending steps (in order)
-
-1. **Reconnect SSD** and run `ollama-start`.
-
-2. **Pin model digest** — edit `agent/config.py` to record the exact
-   `sha256:…` digest of the running model (guards against silent updates).
-   Run `agent/smoke_test.py` to confirm the model responds and tool-calling
-   works end-to-end.
-
-3. **Plumbing run** — `python -m evaluation.run_agent --split dev --limit 3`
-   to verify the runner produces valid JSONL, scores compute, and no import
-   errors surface before committing to a full overnight run.
-
-4. **Dev iteration protocol** (PLAN.md Section 4.2) — up to 5 prompt
-   versions (v0–v4), each evaluated on all 41 dev dates × 3 runs ≈ 123 runs
-   (~4–6 hours).  Plan overnight runs.  Selection rule: highest dev Score B
-   top-1 count; tie-break fewer rejected claims, then fewer failed runs.
-
-5. **think=False vs think=True comparison** on the winning prompt, same full
-   dev run.
-
-6. **Freeze and held-out** — commit and tag `agent-frozen`, then run once:
-   `python -m evaluation.run_agent --split heldout --i-confirm-heldout`
-
-See PLAN.md Sections 4.1 and 4.2 for full details.
+- Running `--split heldout` more than once
+- Changing the agent configuration (prompt, version, think setting) after
+  the `agent-frozen` tag

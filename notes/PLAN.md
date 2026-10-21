@@ -2549,6 +2549,130 @@ vs ~54 minutes for think=False (mean 79 s).
 
 ---
 
+### 4.9.6 Think on/off comparison and final selection (PLAN 4.2 rule)
+
+**Full dev run results: v1 think=False (`f854dee9`, 41 runs) vs v1 think=True (`cda463a5`, 41 runs)**
+
+#### Score A
+
+| incident | target | think=False | think=True |
+|---|---|---|---|
+| I1 | sessions/channel/Organic Search | 5/5 | 1/5 |
+| I2 | conversion_rate/channel/Referral | 4/5 | 4/5 |
+| I3 | aov/channel/Direct | 4/5 | 1/5 |
+| I3b | aov/channel/Direct | 0/1 | 0/1 |
+| I5 | conversion_rate/device/desktop | 4/5 | 3/5 |
+| I7 sessions | sessions/channel/Organic Search | 5/5 | 2/5 |
+| I7 CR | conversion_rate/channel/Referral | 5/5 | 2/5 |
+
+#### Score B (pattern / top-1 / top-3)
+
+| incident | F pat | F t1 | F t3 | T pat | T t1 | T t3 |
+|---|---|---|---|---|---|---|
+| I1 | 5/5 | 5/5 | 5/5 | 2/5 | 1/5 | 1/5 |
+| I2 | 5/5 | 2/5 | 4/5 | 5/5 | 2/5 | 4/5 |
+| I3 | 5/5 | 2/5 | 3/5 | 1/5 | 0/5 | 1/5 |
+| I3b | 1/1 | 0/1 | 0/1 | 1/1 | 0/1 | 0/1 |
+| I4 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I5 | 5/5 | 2/5 | 3/5 | 5/5 | 3/5 | 3/5 |
+| I6 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| I7 | 5/5 | 5/5 | 5/5 | 5/5 | 4/5 | 4/5 |
+| C1 | 0/5 | — | — | 4/5 | — | — |
+
+F = think=False; T = think=True.
+
+I7 both-targets-in-top-3: think=False 5/5 · think=True 0/5.
+
+**Total top-1:** think=False **16** · think=True **10**
+
+#### C1 (false positives / untested / pattern=none count)
+
+| arm | false positives | untested claims | pattern=none |
+|---|---|---|---|
+| think=False | 4 | 3 | 0/5 |
+| think=True | 1 | 1 | 4/5 |
+
+#### Rejected claims
+
+| arm | total | invalid_strength | verdict_mismatch | unknown_entry |
+|---|---|---|---|---|
+| think=False | 246 | 200 | 46 | 0 |
+| think=True | 23 | 15 | 0 | 8 |
+
+#### Timing and thinking tokens
+
+| arm | mean_s | min_s | max_s | total_thinking_tokens | turns_done_reason_length |
+|---|---|---|---|---|---|
+| think=False | 110.4 | 64.1 | 182.4 | 0 | 0 |
+| think=True | 359.2 | 152.5 | 705.7 | 168892 | 3 |
+
+#### Key findings
+
+1. **Thinking shifts agent from over-claiming to under-claiming.**  think=False
+   aggressively submits claims (246 rejected, 200 invalid_strength); think=True
+   drastically reduces invalid claims (23 total) but over-corrects — it submits
+   `pattern=none` with empty claims on dates where localized evidence exists (I1:
+   5/5 → 2/5 pattern, I3: 5/5 → 1/5 pattern).  C1 pattern=none improves from 0/5
+   to 4/5 (correct), but real-incident top-1 drops from 16 to 10.
+
+2. **Thinking produces nonexistent evidence IDs (unknown_entry).**  think=True
+   generated 8 claims citing entry_ids that do not appear in the evidence ledger;
+   the checker rejected all 8 as `unknown_entry`.  This hallucination never occurred
+   under think=False (0 unknown_entry across 246 rejections).  Affected incidents:
+   I3b (1), I6 (2), I7 (5).
+
+#### PLAN 4.2 selection applied: think on/off
+
+| arm | total top-1 | rejected claims | failed runs |
+|---|---|---|---|
+| think=False | **16** | 246 | 0 |
+| think=True | 10 | 23 | 0 |
+
+**Rule step 1 (highest total top-1): think=False=16 > think=True=10 → think=False wins.  No tie-break needed.**
+
+**Final winner: v1, think=False, config_hash `f854dee9`.**
+
+---
+
+## 4.10 Frozen agent
+
+**Winner:** version=v1, think=False, config_hash=`f854dee9`.
+
+**Selection numbers (all candidates):**
+
+| candidate | total dev top-1 | rejected claims | failed runs |
+|---|---|---|---|
+| v0 think=False | 12 | 729 | 21 |
+| v1 think=False | **16** | 246 | 0 |
+| v2 think=False | 1 | 0 | 0 |
+| v3 think=False | 13 | 0 | 0 |
+| v4 think=False | 15 | 0 | 0 |
+| v1 think=True | 10 | 23 | 0 |
+
+v1 think=False wins at the first rule step (highest top-1=16); no tie-break applied.
+
+**Frozen configuration:**
+
+- `FROZEN_AGENT = V1_CFG` (agent/versions.py)
+- `FROZEN_THINK = False` (agent/versions.py)
+- Enforced by `evaluation/run_agent.py`: `--split heldout` refuses `--version` != v1
+  and refuses `--think`; aborts if the computed config_hash ≠ `f854dee9`
+
+**Held-out run plan (PLAN 4.2):**
+
+- 73 dates × 3 runs = 219 runs
+- Single execution: `python -m evaluation.run_agent --split heldout --i-confirm-heldout`
+- **No re-runs, no parameter changes after the `agent-frozen` tag**
+- Harness-bug rule (PLAN 4.2): a run failing with `failed_error` on all 3 dates of an
+  incident is flagged; correct only if the root cause is a confirmed harness bug (not
+  model behavior); any correction requires a new held-out run
+- Infrastructure rule (PLAN 4.2): same model weights, same Ollama version
+  (`ollama 0.35.1`, model digest
+  `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`),
+  same seed and temperature as dev runs (temperature=0, seed=20261001)
+
+---
+
 ## 5. Phase 3 — Evaluation — INCIDENT SET NEEDS REVISION
 
 Not started. Pre-registration discipline and metrics (precision/recall/F1,
