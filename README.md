@@ -1,22 +1,29 @@
 # SignalTrace
 
-SignalTrace is an engine that finds why a business metric moved, and a local LLM agent that may only cite the engine's evidence.
+SignalTrace explains why a business metric moved. A statistics engine tests every part of the business and records what it finds. A small LLM agent running locally reads that evidence and names the cause, and it can only cite results the engine produced.
+
+I tested it on a year of Google Merchandise Store analytics data with problems I planted on known dates, then compared the agent with the engine on 73 dates I had locked away before building the agent.
 
 ## The result
 
-Held-out comparison of the frozen agent against the engine, counted by date. All 73 held-out dates gave identical answers on all 3 agent runs, so a date is the unit. Top-1 is scored on the 46 dates whose incident has a named cause (I1, I2, I3, I3b, I5, I7).
-
-| measure | agent | engine |
+| on 73 locked dates | agent | engine |
 |---|---|---|
-| Top-1 cause correct | 17/46 dates | 7/46 dates |
-| C1 null dates with a confident false claim | 4 of 9 | 1 of 9 |
-| Broad, mix or none pattern ever produced | never | never |
+| Named the planted cause as its #1 answer (46 dates with a planted cause) | 17 | 7 |
+| Normal days where it reported a problem with confidence (9 normal days) | 4 | 1 |
+| Said "nothing is wrong" on a normal day (9 normal days) | 0 | 0 |
+| Identified a spread-out or traffic-mix cause (18 dates) | 0 | not possible: its selection rule never outputs a spread-out or mix pattern |
 
-Paired by date: the agent alone was right on 12 dates, the engine alone on 2 (exact two-sided sign test, p = 0.013). The two arms gave the same pass/fail on 54 of 55 date-targets of Score A (right segment, right direction), which is expected because both read the same ledger.
+On the dates where only one of them got the #1 cause right, the agent was right on 12 and the engine on 2 (exact two-sided sign test, p = 0.013). On Score A (right segment, right direction) they gave the same pass or fail on 54 of 55 date-targets, which makes sense because they read the same evidence. The agent ran 3 times per date and gave identical answers every time, so each date counts once.
 
-The engine's top-1 comes from a naive selection rule that was fixed before the engine ran on held-out data (PLAN 5.5), not from the engine's own diagnosis. So my claim is that the agent is better at picking the top cause from the same evidence. I do not claim that it is a better diagnostician.
+The engine does not name a single top cause on its own, so its #1 answer comes from a simple rule I fixed before the test (PLAN 5.5). My claim is narrower than "the agent is a better diagnostician": given the same evidence, the agent is better at picking which cause matters most. It is also worse on normal days, where it reports problems that are not there.
+
+Built with: Python 3.13, DuckDB, pandas, NumPy, SciPy, Streamlit, Ollama (with its Python client), and the model qwen3:8b.
 
 Full tables, the integrity check and the dev comparison are in `evaluation/results/agent_heldout_f854dee9_report.md` and `notes/PLAN.md` section 7.1.
+
+![Dashboard, Investigate a date tab, 2017-03-04](docs/dashboard.png)
+
+The dashboard's "Investigate a date" tab for 2017-03-04, after clicking Run investigation.
 
 ## What it does
 
@@ -56,7 +63,7 @@ Prompt v2 collapsed to a top-1 of 1. Think mode lowered top-1 from 16 to 10. On 
 
 - **Two invalidated held-out attempts.** The first loaded dev dates instead of held-out dates. The second hit the injector's dev-date guard. I caught both before any model call on a held-out date, kept the files without analyzing them, and fixed the runner (PLAN 4.10.1, 4.10.2).
 - **Truncated context.** An early run lost the `submit_answer` schema because Ollama loaded the model with an 8192 context. I fixed it with compact tool output, a context guard that fails loudly, and a token cap (PLAN 4.1 amendment).
-- **Shared-config bug.** A mutable options dict was mutated by the client library mid-run, and nine later runs failed with HTTP 400. I made the config immutable, invalidated that dev run and redid it.
+- **Shared-config failures.** Nine runs in one dev evaluation failed with HTTP 400 "model is required". I did not confirm the cause. I made the request config immutable, added request logging and a circuit breaker, invalidated that run and redid it, and the failure did not recur.
 - **The `--version` default.** The runner defaults to v4 and the frozen agent is v1. The held-out guard correctly refused the default, so the run used `--version v1`. I have not changed the default.
 - **"No ledger entry" label.** The checker uses this reason for rows that exist and were shown to the model but are marked not claimable. I checked all 300 held-out claims with this label by replaying the tool layer, and none were harness mismatches. I left the misleading label as it is because the agent code is frozen.
 - **A corrected finding.** PLAN 4.9 said thinking "cited nonexistent evidence ids". The replay showed all 8 were non-claimable rows. I corrected the finding in place and kept the original text.
@@ -83,10 +90,11 @@ Python 3.13 is the version used here.
    python -m venv .venv
    .venv/bin/pip install -r requirements.txt
    ```
-2. Get the data. Run `sql/ga360_export.sql` in BigQuery and save its two result sets as `data/raw/ga_sessions_daily.csv` and `data/raw/order_concentration.csv`. I reconstructed that query from the loader's expected schema, because the original export query was not saved. The engine also needs the `order_concentration` table, and there is no loader for it in this repo.
-3. Build the DuckDB file (this drops and recreates the tables).
+2. Get the data. Run `sql/ga360_export.sql` in BigQuery and save its two result sets as `data/raw/ga_sessions_daily.csv` and `data/raw/order_concentration.csv`. I reconstructed that query from the loader's expected schema, because the original export query was not saved.
+3. Build the DuckDB file with both loaders (each drops and recreates its tables).
    ```
    .venv/bin/python ingest/load_ga.py
+   .venv/bin/python ingest/load_order_concentration.py
    ```
 4. Run the dashboard.
    ```
@@ -129,3 +137,5 @@ The held-out split of `run_agent` needs the `agent-frozen` tag, `--version v1` a
 | `notes/` | `PLAN.md` (design, decisions, protocol, results), `baseline.md`, `RESUME.md` |
 
 Start with `notes/PLAN.md` for the decisions and `evaluation/results/agent_heldout_f854dee9_report.md` for the held-out numbers.
+
+Tejas Naik · https://www.linkedin.com/in/tejas-naik-22933019b
