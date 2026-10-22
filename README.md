@@ -9,12 +9,12 @@ Held-out comparison of the frozen agent against the engine, counted by date. All
 | measure | agent | engine |
 |---|---|---|
 | Top-1 cause correct | 17/46 dates | 7/46 dates |
-| Paired sign test on top-1 (14 discordant dates: agent only 12, engine only 2) | two-sided p = 0.013 | |
-| Score A (right segment, right direction): date-targets where the two arms give the same pass or fail | 54/55 | 54/55 |
 | C1 null dates with a confident false claim | 4 of 9 | 1 of 9 |
 | Broad, mix or none pattern ever produced | never | never |
 
-The engine's top-1 comes from a naive selection rule that was fixed before the engine ran on held-out data (PLAN 5.5), not from the engine's own diagnosis. So the claim is that the agent is better at picking the top cause from the same evidence. It is not a claim that the agent is a better diagnostician. Score A is the same for both arms because both read the same ledger.
+Paired by date: the agent alone was right on 12 dates, the engine alone on 2 (exact two-sided sign test, p = 0.013). The two arms gave the same pass/fail on 54 of 55 date-targets of Score A (right segment, right direction), which is expected because both read the same ledger.
+
+The engine's top-1 comes from a naive selection rule that was fixed before the engine ran on held-out data (PLAN 5.5), not from the engine's own diagnosis. So my claim is that the agent is better at picking the top cause from the same evidence. I do not claim that it is a better diagnostician.
 
 Full tables, the integrity check and the dev comparison are in `evaluation/results/agent_heldout_f854dee9_report.md` and `notes/PLAN.md` section 7.1.
 
@@ -54,13 +54,13 @@ Prompt v2 collapsed to a top-1 of 1. Think mode lowered top-1 from 16 to 10. On 
 
 ## What went wrong, and how it was handled
 
-- **Two invalidated held-out attempts.** The first loaded dev dates instead of held-out dates. The second hit the injector's dev-date guard. Both were caught before any model call on a held-out date, the files were kept and never analyzed, and the runner was fixed (PLAN 4.10.1, 4.10.2).
-- **Truncated context.** An early run lost the `submit_answer` schema because Ollama loaded the model with an 8192 context. The fix was compact tool output, a context guard that fails loudly, and a token cap (PLAN 4.1 amendment).
-- **Shared-config bug.** A mutable options dict was mutated by the client library mid-run, and nine later runs failed with HTTP 400. The config is now immutable, and that dev run was invalidated and redone.
-- **The `--version` default.** The runner defaults to v4 and the frozen agent is v1. The held-out guard correctly refused the default, so the run used `--version v1`. The default has not been changed.
-- **"No ledger entry" label.** The checker uses this reason for rows that exist and were shown to the model but are marked not claimable. I checked all 300 held-out claims with this label by replaying the tool layer: none were harness mismatches. The label is misleading and was left as is because the agent code is frozen.
-- **A corrected finding.** PLAN 4.9 said thinking "cited nonexistent evidence ids". The replay showed all 8 were non-claimable rows. The finding is corrected in place, with the original text kept.
-- **One interrupted run.** The held-out run stopped after 194 runs and resumed with the same command for the last 25. Both sessions ran the frozen configuration.
+- **Two invalidated held-out attempts.** The first loaded dev dates instead of held-out dates. The second hit the injector's dev-date guard. I caught both before any model call on a held-out date, kept the files without analyzing them, and fixed the runner (PLAN 4.10.1, 4.10.2).
+- **Truncated context.** An early run lost the `submit_answer` schema because Ollama loaded the model with an 8192 context. I fixed it with compact tool output, a context guard that fails loudly, and a token cap (PLAN 4.1 amendment).
+- **Shared-config bug.** A mutable options dict was mutated by the client library mid-run, and nine later runs failed with HTTP 400. I made the config immutable, invalidated that dev run and redid it.
+- **The `--version` default.** The runner defaults to v4 and the frozen agent is v1. The held-out guard correctly refused the default, so the run used `--version v1`. I have not changed the default.
+- **"No ledger entry" label.** The checker uses this reason for rows that exist and were shown to the model but are marked not claimable. I checked all 300 held-out claims with this label by replaying the tool layer, and none were harness mismatches. I left the misleading label as it is because the agent code is frozen.
+- **A corrected finding.** PLAN 4.9 said thinking "cited nonexistent evidence ids". The replay showed all 8 were non-claimable rows. I corrected the finding in place and kept the original text.
+- **One interrupted run.** The held-out run stopped after 194 runs, and I resumed it with the same command for the last 25. Both sessions ran the frozen configuration.
 
 The integrity scripts are in `evaluation/integrity/`. `replay.py` prints `INTEGRITY: PASS` when no claim is a harness mismatch, and `analyze.py` reproduces the comparison tables and the sign test.
 
@@ -72,7 +72,7 @@ The integrity scripts are in `evaluation/integrity/`. `replay.py` prints `INTEGR
 - The agent never identifies broad, mix or none. It outputs `localized` on every run.
 - The agent over-claims on normal days.
 - One small local model was used.
-- The benchmark incidents are self-designed, so the ground truth is mine and not independent.
+- The benchmark incidents are self-designed. I wrote the ground truth myself, so it is not independent.
 
 ## Run it locally
 
@@ -83,7 +83,7 @@ Python 3.13 is the version used here.
    python -m venv .venv
    .venv/bin/pip install -r requirements.txt
    ```
-2. Get the data. The engine reads `data/raw/ga_sessions_daily.csv`, an aggregation of `bigquery-public-data.google_analytics_sample` to date x channel x device x country with columns date, channel, device, country, sessions, transactions, revenue. The BigQuery query is not in this repo.
+2. Get the data. Run `sql/ga360_export.sql` in BigQuery and save its two result sets as `data/raw/ga_sessions_daily.csv` and `data/raw/order_concentration.csv`. I reconstructed that query from the loader's expected schema, because the original export query was not saved. The engine also needs the `order_concentration` table, and there is no loader for it in this repo.
 3. Build the DuckDB file (this drops and recreates the tables).
    ```
    .venv/bin/python ingest/load_ga.py
@@ -92,6 +92,7 @@ Python 3.13 is the version used here.
    ```
    .venv/bin/streamlit run app/dashboard.py
    ```
+   It serves on http://localhost:8501.
 5. Run the engine benchmark on the dev dates.
    ```
    .venv/bin/python -m evaluation.score
@@ -123,6 +124,7 @@ The held-out split of `run_agent` needs the `agent-frozen` tag, `--version v1` a
 | `evaluation/results/` | every dev and held-out result file and report |
 | `evaluation/integrity/` | the replay and analysis scripts behind the integrity check |
 | `app/` | Streamlit dashboard |
+| `sql/` | reconstructed BigQuery export query for the two input CSVs |
 | `tests/` | tests for the agent tools, loop and runner |
 | `notes/` | `PLAN.md` (design, decisions, protocol, results), `baseline.md`, `RESUME.md` |
 
