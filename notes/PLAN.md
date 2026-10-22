@@ -3787,8 +3787,65 @@ original plan once their phases start.
 | M4 | Streamlit dashboard | **DONE.** commit 4b7a950 |
 | M5 | Held-out set pre-registered and frozen, engine scored on it | Not reached — stop-safe checkpoint |
 | M6 | Evidence-constrained agent, developed on the existing 41 benchmark dates only | Not started |
-| M7 | Two-arm evaluation on held-out, README, writeup | Not started |
+| M7 | Two-arm evaluation on held-out, README, writeup | **Held-out comparison DONE** (7.1, report `agent_heldout_f854dee9_report.md`); README/writeup not started |
 | M8 (optional) | Raw-LLM floor, chat interface, Olist generalization | Not started |
+
+
+### 7.1 M7: held-out results
+
+Full tables: `evaluation/results/agent_heldout_f854dee9_report.md`. Raw runs:
+`evaluation/results/agent_heldout_f854dee9.jsonl` (219 runs = 73 dates x 3, all `status: ok`).
+Agent = frozen v1, think off, config_hash `f854dee9`. Engine = `engine-frozen-m5`
+(`heldout_engine.json`).
+
+**Step 0 integrity check: PASSED.** Every `unknown_entry` claim (300 held-out, 46 dev) was classified by
+replaying the deterministic tool layer (no model call, no agent re-run) against each run's recorded
+tool calls and submitted claims. Replayed rejection counts equal the stored counts in 219/219 runs.
+Result: 0 ids absent from the ledger, 0 in the ledger but never shown, **0 shown as claimable but
+rejected (harness mismatch)**; all 300 are claims on rows shown to the model with `claim_as: "-"`
+(`material_but_uncertain` 267, `unsupported` 33). Session 1 (194 runs): 246; session 2 (25 C1 runs): 54.
+Rate per run: dev 1.12, session 1 1.27, session 2 2.16 (C1 alone: dev 1.6). The dev "0 unknown_entry"
+was a labelling difference: the dev v1 run (`2ff263c`) predates the "context rows invisible" check
+(`20f8c06`), so the same 46 claims were recorded as `verdict_mismatch`; replayed with the frozen
+checker they are 46 `unknown_entry`. The message "no ledger entry" is misleading for these rows
+(wording issue only; rejection and accepted answers are unchanged). `direction_mismatch`: 6 claims
+(C1, 2 dates x 3 runs), the direction shown to the model equals the checker's `_row_direction` in all
+1,638 checked rows; the model flipped the sign on near-zero deltas. The held-out run stands.
+
+**Score A (agent runs of 27 / engine dates of 9):** I1 18/27 vs 6/9; I2 6/27 vs 2/9; I3 6/27 vs 2/9;
+I3b 0/3 vs 0/1; I5 21/27 vs 8/9; I7 sessions 18/27 vs 6/9; I7 conversion_rate 3/27 vs 1/9. The
+agent matches the engine on 54 of 55 date-targets.
+
+**Score B top-1 / top-3 (named-cause incidents):** agent 51/138 (37.0%) / 78/138 (56.5%); engine 7/46
+(15.2%) / 13/46 (28.3%). On dates: agent 17, engine 7 top-1 (both 5, agent only 12, engine only 2).
+I7 both-in-top-3: agent 0/27, engine 0/9. Pattern: the agent submits `localized` on all 219 runs
+(0 on I4/I6/C1, as the engine).
+
+**C1:** agent 24 tested false positives (4 dates x 3 runs) and 24 untested claims, pattern=none 0/27;
+engine 1 false positive, 26 untested, pattern=none 0/9.
+
+**Rejected claims (1,392):** invalid_strength 1,086, unknown_entry 300, direction_mismatch 6,
+verdict_mismatch 0. **Determinism:** 73/73 dates identical across 3 runs. **Efficiency:** 9
+`test_dimension` calls in 210/219 runs (12 x3, 10 x3, 6 x3 on three dates).
+
+**Dev to held-out:** top-1 agent 61.5% -> 37.0%, engine 57.7% -> 15.2%; Score A fell by similar
+amounts for both arms (e.g. I2 agent 80% -> 22%, engine 100% -> 22%; I7 conversion_rate both
+100% -> 11%); I7 both-in-top-3 agent 5/5 -> 0/27; C1 false positives agent 4 (5 runs) -> 24 (27 runs),
+engine 1 (5 dates) -> 1 (9 dates).
+
+**Process notes pending from the held-out run:**
+- *`--version` default usability:* `run_agent.py` defaults to `--version v4`, but the frozen agent is
+  v1. The held-out guard correctly refused the default (`--split heldout` requires the frozen
+  version), so the run had to be started with `--version v1`. Not changed (agent/runner frozen for
+  this run); the default should be the frozen version or required.
+- *Two invalidated held-out attempts*, both kept for audit and never analyzed (Sections 4.10.1,
+  4.10.2): `agent_heldout_f854dee9_INVALID_dev_dates.jsonl` (work list built from dev dates) and
+  `agent_heldout_f854dee9_INVALID_injector_guard.jsonl` (dev-date guard in the injector).
+- *Interrupted-then-resumed run:* 194 runs overnight, interrupted, then the remaining 25 (C1) resumed
+  with the same command at commit `b2b0d7a` (resume skips completed (incident, date, run) keys). All
+  219 records carry `git_head: b2b0d7a` and config_hash `f854dee9`; session 2 is C1-only.
+- *`unknown_entry` wording:* the checker reason `no ledger entry` is also emitted for non-claimable
+  rows that exist and were shown; a reason such as `not_claimable` would be clearer.
 
 ---
 
