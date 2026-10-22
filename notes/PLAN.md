@@ -3792,9 +3792,9 @@ original plan once their phases start.
 | M2 | Zero alerts on normal periods; Black Friday handled | **DONE, gate renegotiated.** Separability gate instead; Black Friday not classifiable (3.6) |
 | M3 | Dev incidents 1–6 correctly diagnosed | **DONE.** Injected benchmark (Section 5) built and scored: 34/36 |
 | M4 | Streamlit dashboard | **DONE.** commit 4b7a950 |
-| M5 | Held-out set pre-registered and frozen, engine scored on it | Not reached — stop-safe checkpoint |
-| M6 | Evidence-constrained agent, developed on the existing 41 benchmark dates only | Not started |
-| M7 | Two-arm evaluation on held-out, README, writeup | **Held-out comparison DONE** (7.1, report `agent_heldout_f854dee9_report.md`); README/writeup not started |
+| M5 | Held-out set pre-registered and frozen, engine scored on it | **DONE.** Set frozen `81fe01e`; engine scored once on held-out `5d0e956` (Section 5.6); tags `heldout-frozen`, `engine-frozen-m5` |
+| M6 | Evidence-constrained agent, developed on the existing 41 benchmark dates only | **DONE.** Agent v1, think off, frozen `faad934`, tag `agent-frozen` (Section 4.10) |
+| M7 | Two-arm evaluation on held-out, README, writeup | **DONE.** Held-out results `18cd61a` (Section 7.1), integrity scripts and sign test `282e292`, README (this commit) |
 | M8 (optional) | Raw-LLM floor, chat interface, Olist generalization | Not started |
 
 

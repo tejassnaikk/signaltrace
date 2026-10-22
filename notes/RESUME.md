@@ -1,16 +1,16 @@
-# SignalTrace — resume point (2026-10-20)
+# SignalTrace: status (2026-10-22)
+
+**The project is complete (M1 to M7).** Nothing is pending except the optional M8 items in PLAN
+Section 7.
 
 ## What this project is
 
-A deterministic KPI root-cause engine plus an evidence-constrained LLM agent
-that operates it.  The engine detects revenue anomalies, decomposes them into
-factor contributions (sessions × conversion_rate × aov), and validates every
-conclusion against a significance-tested evidence ledger.  The agent calls
-three tools (get_factor_decomposition, test_dimension, submit_answer) and
-never performs analysis itself — it only cites what the engine revealed.
-See PLAN.md for architecture, design decisions, and evaluation protocol.
-
----
+A deterministic KPI root-cause engine plus an evidence-constrained LLM agent that operates it.
+The engine detects revenue anomalies, decomposes them into factor contributions
+(sessions x conversion_rate x aov), and validates every conclusion against a significance-tested
+evidence ledger. The agent calls three tools (get_factor_decomposition, test_dimension,
+get_ledger_summary) plus submit_answer, and only cites what the engine revealed.
+See `README.md` for the summary and `PLAN.md` for architecture, decisions and protocol.
 
 ## Milestone status
 
@@ -20,63 +20,25 @@ See PLAN.md for architecture, design decisions, and evaluation protocol.
 | M2 | `0d1e33a` | Component detection, concentration check, separability gate |
 | M3 | `43f231d` | Benchmark incidents (34/36 pass), holiday screening |
 | M4 | `4b7a950` | Streamlit dashboard |
-| M5 | `5d0e956` | Engine evaluated on held-out set; tagged `engine-frozen-m5` and `heldout-frozen` |
-| M6 | complete | Agent frozen at `agent-frozen` tag (commit below); held-out run is next |
+| M5 | `5d0e956` | Engine scored on the held-out set; tags `engine-frozen-m5`, `heldout-frozen` |
+| M6 | `faad934` | Agent frozen (v1, think off, config hash `f854dee9`); tag `agent-frozen` |
+| M7 | `18cd61a`, `282e292` | Held-out run, integrity check, comparison, sign test, README |
 
-**M6 final commit:** see `git log --oneline -1` (tagged `agent-frozen`)
+## Where the results are
 
-**Post-freeze bug fix:** held-out runner was building work list from dev dates (caught
-on the `work: 123 runs (41 dates × 3)` line before any held-out date ran); fixed to
-load `evaluation/heldout/heldout_dates.json` with SHA-256 verification.
-Agent code is byte-identical to `agent-frozen` (`git diff agent-frozen -- agent/` empty).
+- Held-out report: `evaluation/results/agent_heldout_f854dee9_report.md`
+- PLAN Section 7.1: counts, integrity result, process notes
+- Integrity scripts: `evaluation/integrity/` (`replay.py` prints `INTEGRITY: PASS`)
 
----
+## Frozen boundaries (still apply)
 
-## Frozen boundaries
+- Engine frozen at `engine-frozen-m5`: do not modify `detection/`, `investigation/`, `metrics/`.
+- Agent frozen at `agent-frozen`: v1, think off, config hash `f854dee9`. Do not change `agent/`.
+- The held-out run was executed once (219 runs, 73 dates x 3). Do not run `--split heldout` again.
+- The held-out files may now be read; they must not be used to tune anything.
 
-**Engine frozen at `engine-frozen-m5`.**  Do not modify:
-- `detection/`, `investigation/`, `metrics/`
+## Known follow-ups (not done, would need unfreezing)
 
-**Held-out data frozen at `heldout-frozen`.**  Do not read:
-- `evaluation/heldout/`
-- `evaluation/results/heldout_engine.json`
-
-**Agent frozen at `agent-frozen`.**  Frozen configuration:
-- Version: v1 (`agent/versions.py` `FROZEN_AGENT = V1_CFG`)
-- think: False (`FROZEN_THINK = False`)
-- Config hash: `f854dee9`
-- Do not change agent code or configuration between the `agent-frozen` tag and
-  the held-out run
-
-Violation of any boundary invalidates the benchmark.
-
----
-
-## Next step: held-out run
-
-M6 is complete.  The agent is frozen.  Run held-out exactly once:
-
-```
-python -m evaluation.run_agent --split heldout --i-confirm-heldout
-```
-
-Requirements before running:
-1. External SSD connected (`ollama-start`)
-2. Model loaded: qwen3:8b digest
-   `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`
-3. `agent-frozen` tag on HEAD (already created)
-4. Script enforces version=v1 and think=False automatically; aborts if
-   config_hash ≠ f854dee9
-
-Expected: 73 dates × 3 runs = 219 runs.  No re-runs after this.
-
----
-
-## What is forbidden
-
-- Reading or reasoning about held-out ground-truth files (above)
-- Selecting or tuning anything based on held-out outcomes
-- Changing detection/, investigation/, or metrics/ for any reason
-- Running `--split heldout` more than once
-- Changing the agent configuration (prompt, version, think setting) after
-  the `agent-frozen` tag
+- `run_agent.py` defaults to `--version v4`; the frozen agent is v1.
+- The checker reason `no ledger entry` also covers rows that exist but are not claimable.
+- The engine returns no explicit "insufficient history" result for the one date hit in M5 (PLAN 5.6).
