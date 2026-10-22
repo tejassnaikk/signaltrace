@@ -2621,6 +2621,13 @@ I7 both-targets-in-top-3: think=False 5/5 · think=True 0/5.
    under think=False (0 unknown_entry across 246 rejections).  Affected incidents:
    I3b (1), I6 (2), I7 (5).
 
+   **Correction, 2026-10-22 (original text above kept):** replaying the tool layer
+   (`evaluation/integrity/replay.py`) shows all 8 cited ids exist in the ledger and were shown
+   to the model, on `material_but_uncertain` rows with `claim_as: "-"` (absent 0, never shown 0,
+   non-claimable 8). Thinking did not hallucinate ids. The "0 unknown_entry under think=False"
+   contrast is a labelling artifact: the dev v1 checker recorded the same kind of claim (46)
+   as `verdict_mismatch`; see Section 7.1. The selection result (top-1 16 vs 10) is unchanged.
+
 #### PLAN 4.2 selection applied: think on/off
 
 | arm | total top-1 | rejected claims | failed runs |
@@ -3832,6 +3839,16 @@ verdict_mismatch 0. **Determinism:** 73/73 dates identical across 3 runs. **Effi
 amounts for both arms (e.g. I2 agent 80% -> 22%, engine 100% -> 22%; I7 conversion_rate both
 100% -> 11%); I7 both-in-top-3 agent 5/5 -> 0/27; C1 false positives agent 4 (5 runs) -> 24 (27 runs),
 engine 1 (5 dates) -> 1 (9 dates).
+
+**Reporting unit (added 2026-10-22):** all 73 dates are 3/3 identical, so dates are the effective
+sample: agent top-1 17/46 dates vs engine 7/46 (both 5, agent only 12, engine only 2). Paired exact sign
+test (McNemar) on the 14 discordant dates: two-sided p = 0.0129. The engine's top-1 is the
+pre-registered naive selection rule (PLAN 5.5), not the engine's own diagnosis. Run counts (51/138)
+are 3 x the date counts. Reproduce: `evaluation/integrity/replay.py` (step 0) and
+`evaluation/integrity/analyze.py` (tables + sign test), both from the repo root.
+
+**Think finding re-check:** the 8 `unknown_entry` claims in `agent_dev_cda463a5.jsonl` are all shown
+non-claimable rows (see correction in 4.9.6); no ids were absent from the ledger.
 
 **Process notes pending from the held-out run:**
 - *`--version` default usability:* `run_agent.py` defaults to `--version v4`, but the frozen agent is

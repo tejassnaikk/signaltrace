@@ -207,3 +207,33 @@ therefore expected, and the agent-vs-engine gap is the cleaner read.
   4 of 9 dates vs 1 of 9). It never outputs `none`, `broad` or `mix`.
 - The agent's I7 both-in-top-3 drops from 5/5 on dev to 0/27 on held-out, driven by the
   conversion_rate/Referral target (3/27).
+
+## Reporting unit and paired test (added 2026-10-22)
+
+All 73 held-out dates give identical answers on all 3 runs, so the 3 runs add no information and the
+**date is the effective sample**: agent top-1 **17/46 dates** vs engine **7/46 dates** (named-cause
+incidents I1, I2, I3, I3b, I5, I7). Per-date pairs: both 5, agent only 12, engine only 2, neither 27.
+Paired exact sign test (McNemar) on the 14 discordant dates: two-sided **p = 0.0129**
+(2 × P(X ≤ 2 | n = 14, p = 0.5) = 2 × 106/16384). The run counts elsewhere in this report (51/138 etc.)
+are 3 × the date counts and should not be read as independent trials.
+
+The engine's top-1 comes from the **pre-registered naive selection rule** (PLAN 5.5,
+`arm_neutral.engine_answer`), not from the engine's own diagnosis; the engine's own `primary`
+output is not what is scored here. The comparison is agent vs that rule on the same ledger.
+
+## Think finding re-check (dev, `agent_dev_cda463a5`, v1 think=True)
+
+PLAN 4.9.6 stated that thinking "cited nonexistent evidence ids". The same replay classifies all 8
+`unknown_entry` claims in that file: **A (absent from ledger) 0, C (never shown) 0, D (harness
+mismatch) 0, B (shown on a non-claimable row, `claim_as: "-"`) 8** — all `material_but_uncertain`
+rows (I3b 1, I6 2, I7 5). Thinking did not invent ids; it cited visible rows the harness marks
+non-claimable, the same behaviour as think=False (46 such claims, relabelled
+`unknown_entry` by the frozen checker). The think-on/off selection (top-1 16 vs 10) is unaffected.
+
+## Reproduction
+
+```
+python -I evaluation/integrity/replay.py evaluation/results/agent_heldout_f854dee9.jsonl --split-at 194
+python -I evaluation/integrity/replay.py evaluation/results/agent_dev_f854dee9.jsonl evaluation/results/agent_dev_cda463a5.jsonl
+python -I evaluation/integrity/analyze.py
+```
